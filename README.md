@@ -2,6 +2,8 @@
 
 An iStat Menus-inspired Omarchy Quattro bar widget for live RAM usage, Linux memory pressure, memory composition, top processes, paging activity, and swap.
 
+![Memory Usage preview](preview.png)
+
 ## Features
 
 - Compact vertical `MEM` label and adjacent meter, centered in a standard icon slot, that fills upward with used RAM

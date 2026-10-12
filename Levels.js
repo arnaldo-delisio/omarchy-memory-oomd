@@ -227,3 +227,22 @@ function buildNotification(state, apps) {
     urgency: critical ? "critical" : "normal"
   }
 }
+
+// Reads the quoted "#rrggbb" values of a theme's colors.toml into a map, for
+// example { red: "#f7768e", orange: "#eb927b" }. Other lines are ignored.
+function parseThemeColors(raw) {
+  var colors = {}
+  var lines = String(raw || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var match = lines[i].match(/^\s*([A-Za-z0-9_-]+)\s*=\s*["'](#[0-9A-Fa-f]{6})["']/)
+    if (match) colors[match[1]] = match[2].toLowerCase()
+  }
+  return colors
+}
+
+// The theme's own color for the warn level: its orange, else its yellow, else
+// "" (the caller then derives one from the urgent color).
+function warnColorFrom(colors) {
+  var map = colors || {}
+  return map.orange || map.yellow || ""
+}

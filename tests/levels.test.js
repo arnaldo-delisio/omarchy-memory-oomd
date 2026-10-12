@@ -237,5 +237,20 @@ test("formatBytes", () => {
   eq(L.formatBytes(-5), "0.0 MB")
 })
 
+test("parseThemeColors reads quoted hex values and ignores the rest", () => {
+  const c = L.parseThemeColors('mode = "dark"\n\naccent = "#7AA2F7"\n  orange = \'#eb927b\'\nred="#f7768e" # note\nbad = "#12345"\n# yellow = "#ffffff"\n')
+  eq(c, { accent: "#7aa2f7", orange: "#eb927b", red: "#f7768e" })
+})
+test("parseThemeColors copes with empty input", () => {
+  eq(L.parseThemeColors(""), {})
+  eq(L.parseThemeColors(null), {})
+})
+test("warnColorFrom prefers orange, then yellow, else empty", () => {
+  eq(L.warnColorFrom({ orange: "#eb927b", yellow: "#e0af68" }), "#eb927b")
+  eq(L.warnColorFrom({ yellow: "#e0af68" }), "#e0af68")
+  eq(L.warnColorFrom({ red: "#f7768e" }), "")
+  eq(L.warnColorFrom(null), "")
+})
+
 console.log("levels.test.js: " + passed + " passed, " + failed + " failed")
 process.exit(failed === 0 ? 0 : 1)

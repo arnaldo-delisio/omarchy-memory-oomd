@@ -19,6 +19,7 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
+      "iconSize": 17,
       "processCount": 5,
       "listMode": "apps",
       "appCount": 6,
@@ -30,6 +31,16 @@
       "criticalHoldPercent": 50
     },
     "schema": [
+      {
+        "key": "iconSize",
+        "type": "integer",
+        "label": "Icon size",
+        "min": 12,
+        "max": 24,
+        "step": 1,
+        "defaultValue": 17,
+        "description": "Size of the RAM chip icon in the bar, in pixels. The bar's standard icon size is 13."
+      },
       {
         "key": "listMode",
         "type": "enum",

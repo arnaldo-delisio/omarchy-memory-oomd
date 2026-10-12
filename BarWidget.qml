@@ -43,6 +43,9 @@ BarWidget {
     return value !== false && value !== "false" && value !== 0
   }
   readonly property real notifyCooldownSec: numberSetting("notifyCooldownSec", 300, 0, 86400)
+  // Glyph size in pixels. The bar's standard icon is 13 px in a 16 px canvas;
+  // the canvas keeps the same 3 px of room around a larger glyph.
+  readonly property int iconSize: Math.round(numberSetting("iconSize", 17, 12, 24))
   // Rows requested from the scan: enough that the notification can still find a
   // killable app when the biggest ones are protected from oomd.
   readonly property int appFetchCount: 16
@@ -271,6 +274,8 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+    fontSize: root.iconSize
+    opticalSize: root.iconSize + 3
     tooltipText: root.totalBytes > 0
       ? "Memory: " + root.formatBytes(root.usedBytes) + " used of " + root.formatBytes(root.totalBytes)
         + (root.levelRank > 0 ? "\n" + root.level.toUpperCase() + ": " + root.levelState.binding.text : "")

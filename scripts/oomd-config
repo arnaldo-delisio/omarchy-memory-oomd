@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# Print the systemd-oomd thresholds that apply to the user's app.slice as JSON.
+#
+# Sources, lowest to highest priority:
+#   built-in defaults (swap 90%, pressure 50%, 20s; see README)
+#   oomd.conf, then oomd.conf.d/*.conf   ([OOM] SwapUsedLimit=,
+#     DefaultMemoryPressureLimit=, DefaultMemoryPressureDurationSec=)
+#   app.slice.d/*.conf in the user unit directories
+#     ([Slice] ManagedOOMMemoryPressureLimit=, ManagedOOMMemoryPressureDurationSec=)
+#
+# MEMORY_OOMD_ROOT (default /) is prepended to every system path and
+# MEMORY_OOMD_HOME (default $HOME) is the home directory, so tests can feed
+# fixture trees.
+
+set -u
+export LC_ALL=C
+
+root=${MEMORY_OOMD_ROOT:-}
+root=${root%/}
+home=${MEMORY_OOMD_HOME:-${HOME:-}}
+
+main_files=()
+for f in "$root/usr/lib/systemd/oomd.conf" "$root/etc/systemd/oomd.conf"; do
+  [[ -f $f ]] && main_files+=("$f")
+done
+
+# Drop-ins with the same file name replace each other, /etc over /run over
+# /usr/lib; the surviving files are applied in lexical order of file name.
+declare -A dropin=()
+for dir in "$root/usr/lib/systemd/oomd.conf.d" "$root/run/systemd/oomd.conf.d" "$root/etc/systemd/oomd.conf.d"; do
+  for f in "$dir"/*.conf; do
+    [[ -f $f ]] && dropin[${f##*/}]=$f
+  done
+done
+oomd_files=("${main_files[@]}")
+if (( ${#dropin[@]} > 0 )); then
+  while IFS= read -r name; do oomd_files+=("${dropin[$name]}"); done \
+    < <(printf '%s\n' "${!dropin[@]}" | sort)
+fi
+
+declare -A slice_dropin=()
+for dir in "$root/usr/lib/systemd/user/app.slice.d" "$root/run/systemd/user/app.slice.d" \
+           "$root/etc/systemd/user/app.slice.d" "$home/.config/systemd/user/app.slice.d"; do
+  for f in "$dir"/*.conf; do
+    [[ -f $f ]] && slice_dropin[${f##*/}]=$f
+  done
+done
+slice_files=()
+if (( ${#slice_dropin[@]} > 0 )); then
+  while IFS= read -r name; do slice_files+=("${slice_dropin[$name]}"); done \
+    < <(printf '%s\n' "${!slice_dropin[@]}" | sort)
+fi
+
+# Every file is passed to one awk run, tagged with its kind so that only the
+# right section and keys count. Output: "<setting>\t<value>\t<file>" lines.
+parse() {
+  local kind=$1; shift
+  (( $# > 0 )) || return 0
+  awk -v kind="$kind" -v root="$root" -v home="$home" '
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
+
+    # "50%" -> 50, "500‰" -> 50, "5000‱" -> 50; anything else is ignored.
+    function percent(v,   n) {
+      v = trim(v)
+      if (v ~ /^[0-9]+(\.[0-9]+)?%$/) { sub(/%$/, "", v); return v + 0 }
+      if (v ~ /^[0-9]+(\.[0-9]+)?\342\200\260$/) { sub(/\342\200\260$/, "", v); return v / 10 }
+      if (v ~ /^[0-9]+(\.[0-9]+)?\342\200\261$/) { sub(/\342\200\261$/, "", v); return v / 100 }
+      return -1
+    }
+
+    # systemd time span: "20", "20s", "1min 30s", "500ms", "2m" -> seconds.
+    function seconds(v,   total, found, num, unit, rest, mult) {
+      v = trim(v); total = 0; found = 0; rest = v
+      while (rest != "") {
+        if (!match(rest, /^[0-9]+(\.[0-9]+)?[ ]*[a-z]*[ ]*/)) return -1
+        tok = substr(rest, 1, RLENGTH); rest = substr(rest, RLENGTH + 1)
+        match(tok, /^[0-9]+(\.[0-9]+)?/)
+        num = substr(tok, 1, RLENGTH) + 0
+        unit = trim(substr(tok, RLENGTH + 1))
+        if (unit == "" || unit == "s" || unit == "sec" || unit == "second" || unit == "seconds") mult = 1
+        else if (unit == "us" || unit == "usec") mult = 0.000001
+        else if (unit == "ms" || unit == "msec") mult = 0.001
+        else if (unit == "m" || unit == "min" || unit == "minute" || unit == "minutes") mult = 60
+        else if (unit == "h" || unit == "hr" || unit == "hour" || unit == "hours") mult = 3600
+        else return -1
+        total += num * mult; found = 1
+      }
+      return found ? total : -1
+    }
+
+    FNR == 1 { section = "" }
+    /^[ \t]*[#;]/ { next }
+    /^[ \t]*\[/ { section = trim($0); next }
+    {
+      eq = index($0, "=")
+      if (eq == 0) next
+      key = trim(substr($0, 1, eq - 1))
+      val = substr($0, eq + 1)
+      sub(/[ \t]+[#;].*$/, "", val)
+      if (kind == "oomd" && section == "[OOM]") {
+        if (key == "SwapUsedLimit" && (p = percent(val)) >= 0) print "swap\t" p "\t" FILENAME
+        else if (key == "DefaultMemoryPressureLimit" && (p = percent(val)) >= 0) print "pressure\t" p "\t" FILENAME
+        else if (key == "DefaultMemoryPressureDurationSec" && (s = seconds(val)) >= 0) print "duration\t" s "\t" FILENAME
+      } else if (kind == "slice" && section == "[Slice]") {
+        if (key == "ManagedOOMMemoryPressureLimit" && (p = percent(val)) >= 0) print "pressure\t" p "\t" FILENAME
+        else if (key == "ManagedOOMMemoryPressureDurationSec" && (s = seconds(val)) >= 0) print "duration\t" s "\t" FILENAME
+      }
+    }
+  ' "$@"
+}
+
+swap=90 pressure=50 duration=20
+swap_src=default pressure_src=default duration_src=default
+
+apply() {
+  local setting value file
+  while IFS=$'\t' read -r setting value file; do
+    [[ -n $setting ]] || continue
+    file=${file#"$root"}
+    case $setting in
+      swap) swap=$value; swap_src=$file ;;
+      pressure) pressure=$value; pressure_src=$file ;;
+      duration) duration=$value; duration_src=$file ;;
+    esac
+  done
+}
+
+apply < <(parse oomd "${oomd_files[@]}")
+apply < <(parse slice "${slice_files[@]}")
+
+jq -cn \
+  --argjson swap "$swap" --argjson pressure "$pressure" --argjson duration "$duration" \
+  --arg swap_src "$swap_src" --arg pressure_src "$pressure_src" --arg duration_src "$duration_src" '
+  {
+    swapLimitPercent: $swap,
+    pressureLimitPercent: $pressure,
+    pressureDurationSec: $duration,
+    sources: { swap: $swap_src, pressure: $pressure_src, duration: $duration_src }
+  }'

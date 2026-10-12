@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "id": "dev.egoist.memory-usage",
-  "name": "Memory Usage",
-  "version": "1.0.0",
-  "author": "EGOIST",
+  "id": "io.github.arnaldo-delisio.memory-oomd",
+  "name": "Memory (oomd)",
+  "version": "1.1.0",
+  "author": "Arnaldo Delisio (fork of EGOIST's omarchy-memory-usage)",
   "license": "MIT",
-  "description": "Compact memory usage with an iStat-inspired pressure, composition, process, paging, and swap panel.",
+  "description": "Memory usage bar widget that knows about systemd-oomd: kill-line levels, per-app memory by cgroup, and warnings before an app is killed.",
   "kinds": [
     "bar-widget"
   ],
@@ -13,8 +13,8 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Memory Usage",
-    "description": "Live RAM usage, Linux PSI pressure, memory composition, and top processes.",
+    "displayName": "Memory (oomd)",
+    "description": "Live RAM usage, PSI pressure, distance to the systemd-oomd kill lines, and per-app memory by cgroup.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right"

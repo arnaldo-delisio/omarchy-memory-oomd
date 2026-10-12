@@ -6,8 +6,8 @@ import qs.Ui
 
 Panel {
   id: root
-  moduleName: "dev.egoist.memory-usage"
-  ipcTarget: "dev.egoist.memory-usage"
+  moduleName: "io.github.arnaldo-delisio.memory-oomd"
+  ipcTarget: "io.github.arnaldo-delisio.memory-oomd"
   manageIpc: false
 
   property var anchorItem: null

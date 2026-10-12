@@ -6,7 +6,7 @@ import qs.Ui
 
 BarWidget {
   id: root
-  moduleName: "dev.egoist.memory-usage"
+  moduleName: "io.github.arnaldo-delisio.memory-oomd"
 
   property var memorySnapshot: ({})
   property string memoryError: ""

@@ -70,8 +70,9 @@ Panel {
   readonly property real pressurePercent: Math.max(0, Math.min(100, Number(levelState.pressure || 0)))
   readonly property var thresholds: levelState.thresholds ? levelState.thresholds : Levels.normalizeThresholds(null)
 
-  // Level of each constraint on its own, so a bar turns orange or red only when
-  // it is the one oomd is closing in on. Never above the overall level.
+  // Level of each constraint on its own, so a bar or ring turns orange or red
+  // only when it is the one oomd is closing in on. The memory ring follows swap,
+  // the memory-side constraint oomd acts on (RAM itself has no level rule). Never above the overall level.
   readonly property int swapRank: {
     if (levelRank === 0 || swapTotalBytes <= 0) return 0
     var raw = swapPercent >= Number(levelState.swapCriticalAt) ? 2
@@ -285,7 +286,7 @@ Panel {
                 value: root.pressurePercent / 100
                 valueText: root.totalBytes > 0 ? Math.round(root.pressurePercent) + "%" : "--"
                 caption: "PRESSURE"
-                ringColor: root.rankColor(root.levelRank)
+                ringColor: root.rankColor(root.pressureRank)
               }
             }
 
@@ -298,7 +299,7 @@ Panel {
                 value: root.usedPercent / 100
                 valueText: root.totalBytes > 0 ? Math.round(root.usedPercent) + "%" : "--"
                 caption: "MEMORY"
-                ringColor: root.rankColor(root.levelRank)
+                ringColor: root.rankColor(root.swapRank)
               }
             }
           }

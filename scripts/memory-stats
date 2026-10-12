@@ -1,14 +1,33 @@
 #!/usr/bin/env bash
 
+# MEMORY_OOMD_ROOT (default /) is prepended to /proc and /sys paths and
+# MEMORY_OOMD_UID overrides the uid used to find the user's app.slice cgroup,
+# so tests can feed fixture trees.
+
 set -u
 export LC_ALL=C
+
+root=${MEMORY_OOMD_ROOT:-}
+root=${root%/}
+uid=${MEMORY_OOMD_UID:-$UID}
+app_slice="$root/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service/app.slice"
+
+# Only pass files that exist, so a fixture or kernel without one still works.
+files=()
+for f in "$root/proc/meminfo" "$root/proc/pressure/memory" "$root/proc/vmstat"; do
+  [[ -r $f ]] && files+=("$f")
+done
+app_psi=""
+[[ -r $app_slice/memory.pressure ]] && app_psi="$app_slice/memory.pressure" && files+=("$app_psi")
 
 page_size=$(getconf PAGESIZE 2>/dev/null || printf '4096')
 [[ $page_size =~ ^[0-9]+$ ]] || page_size=4096
 sampled_ms=$(date +%s%3N)
 
-awk -v page_size="$page_size" -v sampled_ms="$sampled_ms" '
-  FILENAME == "/proc/meminfo" {
+awk -v page_size="$page_size" -v sampled_ms="$sampled_ms" \
+  -v f_meminfo="$root/proc/meminfo" -v f_psi="$root/proc/pressure/memory" \
+  -v f_vmstat="$root/proc/vmstat" -v f_app="$app_psi" '
+  FILENAME == f_meminfo {
     value = $2 * 1024
     if ($1 == "MemTotal:") total = value
     else if ($1 == "MemFree:") free = value
@@ -22,17 +41,32 @@ awk -v page_size="$page_size" -v sampled_ms="$sampled_ms" '
     next
   }
 
-  FILENAME == "/proc/pressure/memory" && $1 == "some" {
+  # System-wide PSI: "some" feeds the ring, "full" is what oomd keys on.
+  FILENAME == f_psi && ($1 == "some" || $1 == "full") {
     for (field = 2; field <= NF; field++) {
       if ($field ~ /^avg10=/) {
         split($field, pair, "=")
-        pressure = pair[2] + 0
+        if ($1 == "some") pressure = pair[2] + 0
+        else pressure_full = pair[2] + 0
       }
     }
     next
   }
 
-  FILENAME == "/proc/vmstat" {
+  # The monitored cgroup: systemd-oomd compares its "full" avg10 to the limit.
+  FILENAME == f_app && ($1 == "some" || $1 == "full") {
+    app_available = 1
+    for (field = 2; field <= NF; field++) {
+      if ($field ~ /^avg10=/) {
+        split($field, pair, "=")
+        if ($1 == "some") app_some = pair[2] + 0
+        else app_full = pair[2] + 0
+      }
+    }
+    next
+  }
+
+  FILENAME == f_vmstat {
     if ($1 == "pswpin") swap_in = $2
     else if ($1 == "pswpout") swap_out = $2
   }
@@ -57,6 +91,10 @@ awk -v page_size="$page_size" -v sampled_ms="$sampled_ms" '
     if (swap_used < 0) swap_used = 0
     if (pressure < 0) pressure = 0
     if (pressure > 100) pressure = 100
+    if (pressure_full < 0) pressure_full = 0
+    if (pressure_full > 100) pressure_full = 100
+    swap_percent = swap_total > 0 ? swap_used * 100 / swap_total : 0
+    if (swap_percent > 100) swap_percent = 100
 
     printf "{"
     printf "\"sampledMs\":%.0f,", sampled_ms
@@ -72,7 +110,12 @@ awk -v page_size="$page_size" -v sampled_ms="$sampled_ms" '
     printf "\"swapUsedBytes\":%.0f,", swap_used
     printf "\"swapInPages\":%.0f,", swap_in
     printf "\"swapOutPages\":%.0f,", swap_out
-    printf "\"pressurePercent\":%.2f", pressure
+    printf "\"swapUsedPercent\":%.2f,", swap_percent
+    printf "\"pressurePercent\":%.2f,", pressure
+    printf "\"pressureFullPercent\":%.2f,", pressure_full
+    printf "\"appSlicePressureAvailable\":%s,", app_available ? "true" : "false"
+    printf "\"appSlicePressureSomeAvg10\":%.2f,", app_some
+    printf "\"appSlicePressureFullAvg10\":%.2f", app_full
     printf "}\n"
   }
-' /proc/meminfo /proc/pressure/memory /proc/vmstat
+' "${files[@]}"

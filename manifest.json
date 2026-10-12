@@ -19,7 +19,6 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "width": 27,
       "processCount": 5,
       "listMode": "apps",
       "appCount": 6,
@@ -31,16 +30,6 @@
       "criticalHoldPercent": 50
     },
     "schema": [
-      {
-        "key": "width",
-        "type": "integer",
-        "label": "Widget width",
-        "min": 27,
-        "max": 100,
-        "step": 1,
-        "defaultValue": 27,
-        "description": "Fixed horizontal width of the bar widget. 27 is the standard icon slot."
-      },
       {
         "key": "listMode",
         "type": "enum",

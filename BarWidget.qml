@@ -23,12 +23,6 @@ BarWidget {
   property var lastNotifiedMs: ({})
   property var pendingNotification: null
 
-  readonly property real configuredWidth: {
-    var value = Number(setting("width", Style.bar.iconSlot))
-    return isFinite(value) && value > 0
-      ? Math.max(Style.bar.iconSlot, Math.min(100, value))
-      : Style.bar.iconSlot
-  }
   readonly property string memoryScript: localPath(Qt.resolvedUrl("scripts/memory-stats"))
   readonly property string oomdConfigScript: localPath(Qt.resolvedUrl("scripts/oomd-config"))
   readonly property string appScript: localPath(Qt.resolvedUrl("scripts/app-memory"))
@@ -54,7 +48,20 @@ BarWidget {
   readonly property int appFetchCount: 16
   readonly property color foregroundColor: bar ? bar.barForeground : Color.foreground
   readonly property color urgentColor: bar ? bar.urgent : Color.urgent
-  readonly property color levelColor: levelColorFor(levelRank, foregroundColor, urgentColor)
+  // Theme colors.toml values (orange, yellow...) that the shell's Color singleton
+  // does not expose. The warn level uses the theme's orange, else its yellow.
+  property var themeColors: ({})
+  readonly property color warnColor: {
+    var picked = Levels.warnColorFrom(themeColors)
+    return picked !== "" ? Qt.color(picked) : derivedWarnColor(urgentColor)
+  }
+  readonly property color levelColor: levelColorFor(levelRank, foregroundColor, warnColor, urgentColor)
+  // Eased copy of levelColor, so the icon fades between levels.
+  property color shownColor: levelColor
+  Behavior on shownColor {
+    enabled: !root.bar || root.bar.foregroundAnimationEnabled
+    ColorAnimation { duration: 160 }
+  }
   readonly property bool opened: panelLoader.item
     ? panelLoader.item.opened === true
     : false
@@ -76,19 +83,19 @@ BarWidget {
     }
   }
 
-  function mixColor(from, to, amount) {
-    return Qt.rgba(
-      from.r + (to.r - from.r) * amount,
-      from.g + (to.g - from.g) * amount,
-      from.b + (to.b - from.b) * amount,
-      from.a + (to.a - from.a) * amount)
+  // Fallback for a theme without orange or yellow: the urgent color turned to an
+  // orange hue (about 32 degrees), keeping its lightness and at least a
+  // moderate saturation so a gray urgent color still reads as a warning.
+  function derivedWarnColor(urgent) {
+    return Qt.hsla(0.09, Math.max(urgent.hslSaturation, 0.6),
+      Math.max(0.5, Math.min(0.7, urgent.hslLightness)), 1)
   }
 
-  // normal keeps the bar's own foreground, critical is the theme's urgent
-  // color, warn sits between them.
-  function levelColorFor(rank, normal, urgent) {
+  // normal keeps the bar's own foreground, warn is the theme's orange, critical
+  // is the theme's urgent color (red).
+  function levelColorFor(rank, normal, warn, urgent) {
     if (rank >= 2) return urgent
-    if (rank === 1) return mixColor(normal, urgent, 0.55)
+    if (rank === 1) return warn
     return normal
   }
 
@@ -112,6 +119,7 @@ BarWidget {
 
   function refreshConfig() {
     if (!configProcess.running) configProcess.running = true
+    themeColorsFile.reload()
   }
 
   function refreshApps() {
@@ -258,16 +266,11 @@ BarWidget {
     }
   }
 
-  WidgetButton {
+  BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    fixedWidth: root.vertical ? -1 : root.configuredWidth
-    fixedHeight: root.vertical ? Style.bar.iconSlot : -1
-    horizontalMargin: 0
-    verticalPadding: 0
-    labelVisible: false
-    hasVisualContent: true
+    fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
     tooltipText: root.totalBytes > 0
       ? "Memory: " + root.formatBytes(root.usedBytes) + " used of " + root.formatBytes(root.totalBytes)
         + (root.levelRank > 0 ? "\n" + root.level.toUpperCase() + ": " + root.levelState.binding.text : "")
@@ -277,69 +280,81 @@ BarWidget {
       if (mouseButton === Qt.LeftButton) root.toggle()
     }
 
-    Row {
-      id: memoryIndicator
-      anchors.centerIn: parent
-      height: Style.bar.iconCanvas
-      spacing: Style.spaceReal(3)
-
+    // The RAM chip glyph drawn twice: dimmed underneath, and on top at full
+    // color inside a clipped box that rises with the RAM used. Both copies are
+    // laid out by the same OpticalGlyph at the same size, so they line up
+    // pixel for pixel; the clip box spans the glyph's painted height.
+    iconComponent: Component {
       Item {
-        width: Style.spaceReal(8)
-        height: parent.height
+        id: canvas
 
-        Text {
-          anchors.centerIn: parent
-          text: "M\nE\nM"
-          color: button.foreground
-          font.family: button.fontFamily
-          font.pixelSize: 7
-          font.bold: true
-          lineHeight: 0.72
-          lineHeightMode: Text.ProportionalHeight
-          horizontalAlignment: Text.AlignHCenter
-          verticalAlignment: Text.AlignVCenter
-          renderType: Text.NativeRendering
+        readonly property real paintedTop: chip.baselineY + glyphMetrics.tightBoundingRect.y
+        readonly property real paintedHeight: glyphMetrics.tightBoundingRect.height
 
-          Behavior on color {
-            enabled: !root.bar || root.bar.foregroundAnimationEnabled
-            ColorAnimation { duration: 160 }
-          }
-        }
-      }
-
-      Item {
-        id: memoryMeter
-        width: Style.spaceReal(7)
-        height: parent.height
-
-        Rectangle {
-          id: memoryTrack
+        OpticalGlyph {
+          id: chip
           anchors.fill: parent
-          radius: width / 2
-          color: Qt.rgba(button.foreground.r, button.foreground.g, button.foreground.b, 0.12)
+          // nf-md-memory, U+F035B
+          text: "\udb80\udf5b"
+          fontFamily: button.fontFamily
+          fontSize: button.fontSize
+          color: Qt.rgba(root.shownColor.r, root.shownColor.g, root.shownColor.b, 0.28)
         }
 
-        Rectangle {
-          anchors.left: memoryTrack.left
-          anchors.right: memoryTrack.right
-          anchors.bottom: memoryTrack.bottom
-          height: root.totalBytes > 0
-            ? memoryTrack.height * root.usedFraction
-            : 0
-          radius: Math.min(width / 2, height / 2)
-          color: root.levelColor
+        TextMetrics {
+          id: glyphMetrics
+          font.family: chip.fontFamily
+          font.pixelSize: chip.renderedFontSize
+          text: chip.text
+        }
+
+        Item {
+          id: fill
+          width: canvas.width
+          height: root.totalBytes > 0 ? canvas.paintedHeight * root.usedFraction : 0
+          y: canvas.paintedTop + canvas.paintedHeight - height
+          clip: true
 
           Behavior on height {
             NumberAnimation { duration: 320; easing.type: Easing.OutCubic }
           }
 
-          Behavior on color {
-            enabled: !root.bar || root.bar.foregroundAnimationEnabled
-            ColorAnimation { duration: 160 }
+          OpticalGlyph {
+            x: 0
+            y: -fill.y
+            width: canvas.width
+            height: canvas.height
+            text: chip.text
+            fontFamily: chip.fontFamily
+            fontSize: chip.fontSize
+            color: root.shownColor
           }
         }
       }
     }
+  }
+
+  FileView {
+    id: themeColorsFile
+    path: Color.currentThemePath + "/colors.toml"
+    watchChanges: false
+    printErrors: false
+    onLoaded: root.themeColors = Levels.parseThemeColors(text())
+  }
+
+  // A theme switch changes the shell's palette; re-read colors.toml shortly
+  // after, once the new theme's files are in place.
+  Connections {
+    target: Color
+    function onForegroundChanged() { themeReload.restart() }
+    function onAccentChanged() { themeReload.restart() }
+    function onUrgentChanged() { themeReload.restart() }
+  }
+
+  Timer {
+    id: themeReload
+    interval: 400
+    onTriggered: themeColorsFile.reload()
   }
 
   Process {

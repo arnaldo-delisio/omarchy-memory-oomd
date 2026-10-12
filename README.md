@@ -4,11 +4,11 @@ A fork of [egoist/omarchy-memory-usage](https://github.com/egoist/omarchy-memory
 
 ![Memory Usage preview](preview.png)
 
-The preview image is from the upstream widget.
+The preview image is from the upstream widget. It shows the upstream bar item (the `MEM` label with a vertical meter) and the upstream panel; this fork replaced the bar item with the RAM chip icon described under "The bar icon" and has not recreated the preview.
 
 ## What it adds over upstream
 
-- **oomd-aware levels.** The widget judges memory as normal, warn or critical by how close the machine is to an oomd kill, not by RAM used. The bar meter and the pressure ring change color with the level.
+- **oomd-aware levels.** The widget judges memory as normal, warn or critical by how close the machine is to an oomd kill, not by RAM used. The bar icon and the pressure ring change color with the level.
 - **The binding constraint.** The panel shows which trigger is closest to firing, for example `swap 60% of 90% kill line`, and how long pressure has been held above the limit.
 - **Per-app memory by cgroup.** The panel section "Apps (oomd candidates)" lists the units oomd actually kills, with RAM, swap and how full each app's `memory.max` or swap cap is. Apps marked `user.oomd_omit` are dimmed because oomd skips them.
 - **Notifications.** Entering warn or critical sends a desktop notification. Critical uses critical urgency and names the largest app oomd could kill.
@@ -48,6 +48,22 @@ rm -r ~/.config/omarchy/plugins/io.github.arnaldo-delisio.memory-oomd
 
 For a git-installed copy, `omarchy plugin remove io.github.arnaldo-delisio.memory-oomd` does both. If you also run the upstream plugin, the two do not conflict: the ids differ.
 
+## The bar icon
+
+The bar shows the RAM chip glyph (Nerd Font `nf-md-memory`, U+F035B) in the standard icon slot, drawn like the other first-party bar icons. It fills from the bottom with RAM used, the same figure as upstream's meter: `MemTotal - MemAvailable` as a share of `MemTotal`. The glyph is drawn twice, dimmed underneath and at full color on top inside a box that is clipped to the used share of the glyph's height, so the two copies line up exactly. The fill height eases over a third of a second.
+
+The color follows the oomd level, not the RAM figure:
+
+| Level | Color | Source |
+| --- | --- | --- |
+| normal | the bar foreground | `bar.barForeground` |
+| warn | the theme's orange | `orange` in the theme's `colors.toml`, else its `yellow` |
+| critical | the theme's red | `bar.urgent` (`red` in `colors.toml`, or `[bar] active` in `shell.toml`) |
+
+The shell's own color API does not expose orange or yellow, so the widget reads `colors.toml` of the current theme itself, again after a theme switch and every 5 minutes. A theme with neither key gets a derived warn color: the urgent color turned to an orange hue (about 32 degrees) with at least 60% saturation. Themes that define `red` and `orange` oddly (for example a monochrome theme) show those colors as given.
+
+The old `width` setting only sized the `MEM` label and meter, so it was removed. The widget takes the standard icon slot of the bar, which follows the theme's `icon-slot` size.
+
 ## Settings
 
 Set one with `omarchy bar set <id> <key> <value>`, for example:
@@ -58,7 +74,6 @@ omarchy bar set io.github.arnaldo-delisio.memory-oomd notify false
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `width` | 27 | Fixed horizontal widget width. 27 is the standard icon slot. |
 | `listMode` | `apps` | Panel list: `apps` (cgroups), `processes` (executables, as upstream) or `both`. |
 | `appCount` | 6 | Rows in the apps list (1 to 12). |
 | `processCount` | 5 | Rows in the process list (1 to 10). |

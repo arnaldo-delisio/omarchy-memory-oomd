@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Copy this checkout into the Omarchy plugin folder, without .git or tests.
+# Run it again after every change: the shell reloads plugin files when they change.
+#   scripts/install-local            install or update
+#   scripts/install-local --dry-run  show what would change
+set -euo pipefail
+
+repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+id=$(jq -r .id "$repo/manifest.json")
+target=${OMARCHY_PLUGIN_DIR:-$HOME/.config/omarchy/plugins}/$id
+flags=(-a --delete --exclude=.git --exclude=tests --exclude=.gitignore)
+[[ ${1:-} == --dry-run ]] && flags+=(--dry-run --itemize-changes)
+
+omarchy plugin validate "$repo"
+[[ ${1:-} == --dry-run ]] || mkdir -p "$target"
+rsync "${flags[@]}" "$repo/" "$target/"
+
+if [[ -n $(find "$target" -type l) ]]; then
+  echo "install-local: symlinks found in $target" >&2
+  exit 1
+fi
+echo "Installed $id to $target"
+echo "Enable it once with: omarchy plugin enable $id --section right --after omarchy.agents"

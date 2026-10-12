@@ -106,7 +106,7 @@ Notifications fire on escalation only. Each level has its own cooldown, so a war
 
 ## Per-app memory
 
-`scripts/app-memory` reads the cgroup v2 files of the units at depth 1 and 2 under `app.slice`: `memory.current`, `memory.swap.current`, `memory.max`, `memory.high`, `memory.swap.max` and `memory.pressure`. Names come from the unit name with the prefix and suffix removed and `\x2d` unescaped. Terminal scopes are named by what runs inside, for example `terminal (claude)`, preferring claude, codex and nvim over shells. Units that resolve to the same name are summed. Rows are sorted by RAM plus swap, largest first, and the top N are shown. The cap figure is the fullest unit of the app, not a sum.
+`scripts/app-memory` reads the cgroup v2 files of the units at depth 1 and 2 under `app.slice`: `memory.current`, `memory.swap.current`, `memory.max`, `memory.high`, `memory.swap.max` and `memory.pressure`. Names come from the unit name with the prefix and suffix removed and `\x2d` unescaped. Terminal scopes are named by what runs inside, for example `terminal (claude)`, preferring claude, codex and nvim over shells. Units that resolve to the same name are summed. Rows are sorted by RAM plus swap, largest first, and the top N are shown. The cap figure is the fullest unit of the app, not a sum. The panel shows it as `94% cap`, the fuller of the RAM cap and the swap cap, kept short so the app name is not truncated.
 
 Use it directly:
 

@@ -139,13 +139,13 @@ Panel {
     return processIconSource(name)
   }
 
-  // "63% of cap" for the tighter of the RAM cap and the swap cap, "" if uncapped.
+  // "63% cap" for the tighter of the RAM cap and the swap cap, "" if uncapped.
+  // Kept short so the app name keeps the row's width.
   function capLabel(app) {
     var ram = app.capPercent === null || app.capPercent === undefined ? -1 : Number(app.capPercent)
     var swap = app.swapCapPercent === null || app.swapCapPercent === undefined ? -1 : Number(app.swapCapPercent)
     if (ram < 0 && swap < 0) return ""
-    if (swap > ram) return Math.round(swap) + "% of swap cap"
-    return Math.round(ram) + "% of cap"
+    return Math.round(Math.max(ram, swap)) + "% cap"
   }
 
   function capFraction(app) {
@@ -634,7 +634,7 @@ Panel {
               id: appCapLabel
               anchors.right: appSwapLabel.left
               anchors.verticalCenter: parent.verticalCenter
-              width: Style.space(86)
+              width: Style.space(52)
               text: root.capLabel(modelData)
               color: root.capFraction(modelData) >= 80 ? root.urgentColor : root.dimColor
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -673,7 +673,7 @@ Panel {
           visible: root.showsApps && root.appRows.length > 0
           width: parent.width
           height: visible ? implicitHeight : 0
-          text: "RAM, +swap, cap use · dimmed apps are protected from oomd"
+          text: "RAM, +swap, fuller of RAM or swap cap · dimmed = protected"
           color: root.dimColor
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.caption

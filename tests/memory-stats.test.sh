@@ -21,8 +21,6 @@ SwapTotal:      10000000 kB
 SwapFree:        2800000 kB"
   put "$r/proc/pressure/memory" "some avg10=3.50 avg60=1.00 avg300=0.50 total=100
 full avg10=2.25 avg60=0.80 avg300=0.40 total=90"
-  put "$r/proc/vmstat" "pswpin 1000
-pswpout 2000"
 }
 
 # Full fixture: system PSI plus the app.slice cgroup.
@@ -41,7 +39,6 @@ assert_json "system full avg10 is exposed" "$out" .pressureFullPercent 2.25
 assert_json "app.slice pressure is available" "$out" .appSlicePressureAvailable true
 assert_json "app.slice some avg10" "$out" .appSlicePressureSomeAvg10 12
 assert_json "app.slice full avg10" "$out" .appSlicePressureFullAvg10 7.5
-assert_json "swap counters carried over" "$out" '[.swapInPages,.swapOutPages]' '[1000,2000]'
 
 # No app.slice cgroup (not under systemd, or another uid).
 R=$TMP/noapp
@@ -60,7 +57,7 @@ MemAvailable: 600 kB
 SwapTotal: 0 kB
 SwapFree: 0 kB"
 out=$(MEMORY_OOMD_ROOT=$R "$SCRIPTS_DIR/memory-stats")
-assert_json_valid "missing PSI and vmstat files still emit valid JSON" "$out"
+assert_json_valid "missing PSI files still emit valid JSON" "$out"
 assert_json "no swap gives 0%" "$out" '[.swapTotalBytes,.swapUsedPercent]' '[0,0]'
 assert_json "no PSI gives 0 pressure" "$out" '[.pressurePercent,.pressureFullPercent]' '[0,0]'
 

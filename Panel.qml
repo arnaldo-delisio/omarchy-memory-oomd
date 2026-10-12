@@ -1,8 +1,10 @@
 import QtQuick
+import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "Levels.js" as Levels
 
 Panel {
   id: root
@@ -25,7 +27,6 @@ Panel {
   readonly property var levelState: hostWidget && hostWidget.levelState ? hostWidget.levelState : ({})
   readonly property int levelRank: Number(levelState.rank || 0)
   readonly property string levelName: String(levelState.level || "normal")
-  readonly property string constraintText: levelState.binding ? String(levelState.binding.text || "") : ""
   readonly property var appSnapshot: hostWidget && hostWidget.appSnapshot ? hostWidget.appSnapshot : ({})
   readonly property var appRows: appSnapshot.apps && Array.isArray(appSnapshot.apps) ? appSnapshot.apps : []
   readonly property bool appsLoaded: hostWidget ? hostWidget.appsLoaded === true : false
@@ -37,54 +38,62 @@ Panel {
     var value = Number(setting("appCount", 6))
     return isFinite(value) ? Math.max(1, Math.min(12, Math.round(value))) : 6
   }
-  readonly property var worstPressure: appSnapshot.maxPressure ? appSnapshot.maxPressure : null
   readonly property int processRosterSize: {
     var value = Number(setting("processCount", 5))
     return isFinite(value) ? Math.max(1, Math.min(10, Math.round(value))) : 5
   }
   readonly property string processScript: localPath(Qt.resolvedUrl("scripts/process-memory"))
 
+  // Styling follows the built-in Agents popup: one foreground color on a track,
+  // dim for secondary text, and a level color only where oomd is getting close.
+  readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property color urgent: bar ? bar.urgent : Color.urgent
+  readonly property color dim: Qt.darker(foreground, 1.55)
+  readonly property color track: Style.selectedFillFor(foreground, Color.accent)
+  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  // The theme's orange comes from the bar widget (it reads colors.toml).
+  readonly property color warnColor: hostWidget && hostWidget.warnColor !== undefined
+    ? hostWidget.warnColor
+    : urgent
+
   readonly property real totalBytes: Number(snapshot.totalBytes || 0)
   readonly property real usedBytes: Number(snapshot.usedBytes || 0)
-  readonly property real appBytes: Number(snapshot.appBytes || 0)
-  readonly property real kernelBytes: Number(snapshot.kernelBytes || 0)
-  readonly property real cacheBytes: Number(snapshot.cacheBytes || 0)
-  readonly property real freeBytes: Number(snapshot.freeBytes || 0)
   readonly property real swapTotalBytes: Number(snapshot.swapTotalBytes || 0)
-  readonly property real swapUsedBytes: Number(snapshot.swapUsedBytes || 0)
-  readonly property real swapInBytesPerSecond: Number(snapshot.swapInBytesPerSecond || 0)
-  readonly property real swapOutBytesPerSecond: Number(snapshot.swapOutBytesPerSecond || 0)
-  readonly property real pressurePercent: Math.max(0, Math.min(100, Number(snapshot.pressurePercent || 0)))
   readonly property real usedPercent: totalBytes > 0
     ? Math.max(0, Math.min(100, usedBytes * 100 / totalBytes))
     : 0
+  readonly property real swapPercent: swapTotalBytes > 0
+    ? Math.max(0, Math.min(100, Number(snapshot.swapUsedPercent || 0)))
+    : 0
+  // The pressure oomd judges (app.slice, else system-wide), the same figure the
+  // level is computed from.
+  readonly property real pressurePercent: Math.max(0, Math.min(100, Number(levelState.pressure || 0)))
+  readonly property var thresholds: levelState.thresholds ? levelState.thresholds : Levels.normalizeThresholds(null)
 
-  readonly property color appColor: "#168cfa"
-  readonly property color kernelColor: "#f05a9d"
-  readonly property color cacheColor: "#ffc11a"
-  readonly property color freeColor: Qt.rgba(barForeground.r, barForeground.g, barForeground.b, 0.22)
-  readonly property color urgentColor: bar ? bar.urgent : Color.urgent
-  readonly property color dimColor: Qt.darker(barForeground, 1.5)
-  // Level colors come from the bar widget (BarWidget.levelColor), so the panel
-  // shows exactly what the bar icon shows: the bar foreground, the theme's
-  // orange for warn, bar.urgent for critical.
-  readonly property color levelAccent: hostWidget ? hostWidget.levelColor : barForeground
-  // The pressure ring keeps its accent color while memory is fine, then follows
-  // the level.
-  readonly property color pressureColor: levelRank > 0 ? levelAccent : Color.accent
+  // Level of each constraint on its own, so a bar turns orange or red only when
+  // it is the one oomd is closing in on. Never above the overall level.
+  readonly property int swapRank: {
+    if (levelRank === 0 || swapTotalBytes <= 0) return 0
+    var raw = swapPercent >= Number(levelState.swapCriticalAt) ? 2
+      : (swapPercent >= Number(levelState.swapWarnAt) ? 1 : 0)
+    return Math.min(raw, levelRank)
+  }
+  readonly property int pressureRank: {
+    if (levelRank === 0) return 0
+    var raw = pressurePercent >= thresholds.pressureLimitPercent
+        && Number(levelState.heldSec || 0) >= Number(levelState.holdNeededSec || 0) ? 2
+      : (pressurePercent >= Number(levelState.pressureWarnAt) ? 1 : 0)
+    return Math.min(raw, levelRank)
+  }
+  readonly property color levelColor: rankColor(levelRank)
 
-  readonly property var memorySegments: [
-    { value: appBytes, color: appColor },
-    { value: kernelBytes, color: kernelColor },
-    { value: cacheBytes, color: cacheColor },
-    { value: freeBytes, color: freeColor }
-  ]
-  readonly property var breakdownRows: [
-    { label: "Applications", value: appBytes, color: appColor },
-    { label: "Kernel", value: kernelBytes, color: kernelColor },
-    { label: "Cache", value: cacheBytes, color: cacheColor },
-    { label: "Free", value: freeBytes, color: freeColor }
-  ]
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)) }
+
+  function rankColor(rank) {
+    if (rank >= 2) return urgent
+    if (rank === 1) return warnColor
+    return foreground
+  }
 
   function localPath(url) {
     var value = String(url || "")
@@ -122,25 +131,14 @@ Panel {
     if (hostWidget && showsApps) hostWidget.refreshApps()
   }
 
-  function appIconSource(name) {
-    if (String(name || "").indexOf("terminal") === 0) {
-      var terminalIcon = Quickshell.iconPath("utilities-terminal", true)
-      if (terminalIcon) return terminalIcon
-    }
-    return processIconSource(name)
-  }
-
-  // "63% cap" for the tighter of the RAM cap and the swap cap, "" if uncapped.
-  // Kept short so the app name keeps the row's width.
-  function capLabel(app) {
-    var ram = app.capPercent === null || app.capPercent === undefined ? -1 : Number(app.capPercent)
-    var swap = app.swapCapPercent === null || app.swapCapPercent === undefined ? -1 : Number(app.swapCapPercent)
-    if (ram < 0 && swap < 0) return ""
-    return Math.round(Math.max(ram, swap)) + "% cap"
-  }
-
+  // The tighter of an app's RAM cap and swap cap, in percent; 0 if uncapped.
   function capFraction(app) {
     return Math.max(Number(app.capPercent || 0), Number(app.swapCapPercent || 0))
+  }
+
+  function hasCap(app) {
+    return (app.capPercent !== null && app.capPercent !== undefined)
+      || (app.swapCapPercent !== null && app.swapCapPercent !== undefined)
   }
 
   function updateProcesses(raw) {
@@ -171,8 +169,26 @@ Panel {
     return (value / (1024 * 1024 * 1024)).toFixed(1) + " GB"
   }
 
-  function formatRate(bytesPerSecond) {
-    return formatBytes(bytesPerSecond) + "/s"
+  // "10.6 / 13.3 GB": two sizes sharing one unit.
+  function formatUsedOf(used, total) {
+    var gib = 1024 * 1024 * 1024
+    if (Number(total) >= gib)
+      return (Number(used) / gib).toFixed(1) + " / " + (Number(total) / gib).toFixed(1) + " GB"
+    return formatBytes(used) + " / " + formatBytes(total)
+  }
+
+  // "4.0 + 4.2 GB": RAM plus swap in one unit; just the RAM when there is no swap.
+  function formatRamSwap(ram, swap) {
+    var mib = 1024 * 1024
+    var gib = 1024 * mib
+    var r = Math.max(0, Number(ram) || 0)
+    var w = Math.max(0, Number(swap) || 0)
+    if (Math.max(r, w) >= 100 * mib) {
+      var gb = (r / gib).toFixed(1)
+      return (w > 0 ? gb + " + " + (w / gib).toFixed(1) : gb) + " GB"
+    }
+    var mb = Math.round(r / mib).toString()
+    return (w > 0 ? mb + " + " + Math.round(w / mib) : mb) + " MB"
   }
 
   function normalizedAppName(value) {
@@ -214,22 +230,6 @@ Panel {
     return entry && entry.name ? String(entry.name) : String(processName || "Unknown")
   }
 
-  function processIconSource(processName) {
-    var entry = desktopEntryForProcess(processName)
-    var appLibrary = root.bar && root.bar.shell ? root.bar.shell.appLibrary : null
-    if (entry && appLibrary && typeof appLibrary.iconSource === "function")
-      return appLibrary.iconSource(entry.icon)
-
-    if (entry && entry.icon) {
-      var entryIcon = Quickshell.iconPath(String(entry.icon), true)
-      if (entryIcon) return entryIcon
-    }
-
-    var processIcon = Quickshell.iconPath(String(processName || ""), true)
-    if (processIcon) return processIcon
-    return Quickshell.iconPath("application-x-executable", true)
-  }
-
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
@@ -237,669 +237,442 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(400))
+    contentWidth: panel.fittedContentWidth(Style.space(380))
     contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      onMoveRequested: function(dx, dy) {
+        if (dy !== 0)
+          panelFlick.contentY = root.clamp(panelFlick.contentY + dy * Style.space(56), 0,
+                                           Math.max(0, panelFlick.contentHeight - panelFlick.height))
+      }
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(text) {
         if (text === "r" || text === "R") root.refreshAll()
       }
 
-      Column {
-        id: contentColumn
-        width: parent.width
-        spacing: Style.space(8)
+      Flickable {
+        id: panelFlick
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: contentColumn.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+        interactive: contentHeight > height
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-        Row {
-          width: parent.width
-          height: Style.space(142)
+        Column {
+          id: contentColumn
+          width: panelFlick.width
+          spacing: Style.space(12)
 
-          Item {
-            width: parent.width / 2
-            height: parent.height
+          // ---------- Rings: pressure and memory ----------
+          Row {
+            width: parent.width
+            height: pressureRing.height
 
-            Canvas {
-              id: pressureRing
-              anchors.horizontalCenter: parent.horizontalCenter
-              anchors.top: parent.top
-              width: Style.space(104)
-              height: width
-              property real progress: root.pressurePercent / 100
-              property color trackColor: root.freeColor
-              property color ringColor: root.pressureColor
+            Item {
+              width: parent.width / 2
+              height: parent.height
 
-              onProgressChanged: requestPaint()
-              onTrackColorChanged: requestPaint()
-              onRingColorChanged: requestPaint()
-              onWidthChanged: requestPaint()
-              onHeightChanged: requestPaint()
-              onPaint: {
-                var context = getContext("2d")
-                context.clearRect(0, 0, width, height)
-                var ringWidth = Style.spaceReal(8)
-                var radius = Math.max(0, Math.min(width, height) / 2 - ringWidth / 2)
-                var start = -Math.PI / 2
-                context.lineWidth = ringWidth
-                context.lineCap = "butt"
-
-                context.beginPath()
-                context.strokeStyle = trackColor
-                context.arc(width / 2, height / 2, radius, start, start + Math.PI * 2)
-                context.stroke()
-
-                if (progress > 0) {
-                  context.beginPath()
-                  context.strokeStyle = ringColor
-                  context.arc(width / 2, height / 2, radius, start, start + Math.PI * 2 * Math.min(1, progress))
-                  context.stroke()
-                }
+              Ring {
+                id: pressureRing
+                anchors.horizontalCenter: parent.horizontalCenter
+                value: root.pressurePercent / 100
+                valueText: root.totalBytes > 0 ? Math.round(root.pressurePercent) + "%" : "--"
+                caption: "PRESSURE"
+                ringColor: root.rankColor(root.levelRank)
               }
             }
 
-            Text {
-              anchors.horizontalCenter: pressureRing.horizontalCenter
-              anchors.verticalCenter: pressureRing.verticalCenter
-              anchors.verticalCenterOffset: -Style.space(4)
-              text: root.totalBytes > 0 ? Math.round(root.pressurePercent) + "%" : "--"
-              color: root.levelAccent
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.space(25)
-              font.bold: true
-              horizontalAlignment: Text.AlignHCenter
-            }
+            Item {
+              width: parent.width / 2
+              height: parent.height
 
-            Text {
-              anchors.horizontalCenter: pressureRing.horizontalCenter
-              anchors.verticalCenter: pressureRing.verticalCenter
-              anchors.verticalCenterOffset: Style.space(20)
-              text: "PRESSURE"
-              color: root.barForeground
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-              font.bold: true
-              horizontalAlignment: Text.AlignHCenter
-            }
-
-            Text {
-              anchors.horizontalCenter: parent.horizontalCenter
-              anchors.bottom: parent.bottom
-              text: "PSI · 10 second average"
-              color: Qt.darker(root.barForeground, 1.5)
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-            }
-          }
-
-          Item {
-            width: parent.width / 2
-            height: parent.height
-
-            Canvas {
-              id: memoryRing
-              anchors.horizontalCenter: parent.horizontalCenter
-              anchors.top: parent.top
-              width: Style.space(104)
-              height: width
-              property real total: root.totalBytes
-              property var segments: root.memorySegments
-              property color trackColor: root.freeColor
-
-              onTotalChanged: requestPaint()
-              onSegmentsChanged: requestPaint()
-              onTrackColorChanged: requestPaint()
-              onWidthChanged: requestPaint()
-              onHeightChanged: requestPaint()
-              onPaint: {
-                var context = getContext("2d")
-                context.clearRect(0, 0, width, height)
-                var ringWidth = Style.spaceReal(8)
-                var radius = Math.max(0, Math.min(width, height) / 2 - ringWidth / 2)
-                var start = -Math.PI / 2
-                var fullCircle = Math.PI * 2
-                var gap = 0.02
-                context.lineWidth = ringWidth
-                context.lineCap = "butt"
-
-                context.beginPath()
-                context.strokeStyle = trackColor
-                context.arc(width / 2, height / 2, radius, start, start + fullCircle)
-                context.stroke()
-
-                if (total <= 0) return
-                for (var index = 0; index < segments.length; index++) {
-                  var segment = segments[index]
-                  var sweep = Math.max(0, Number(segment.value || 0)) / total * fullCircle
-                  if (sweep > gap) {
-                    context.beginPath()
-                    context.strokeStyle = segment.color
-                    context.arc(width / 2, height / 2, radius, start + gap / 2, start + sweep - gap / 2)
-                    context.stroke()
-                  }
-                  start += sweep
-                }
+              Ring {
+                anchors.horizontalCenter: parent.horizontalCenter
+                value: root.usedPercent / 100
+                valueText: root.totalBytes > 0 ? Math.round(root.usedPercent) + "%" : "--"
+                caption: "MEMORY"
+                ringColor: root.rankColor(root.levelRank)
               }
             }
-
-            Text {
-              anchors.horizontalCenter: memoryRing.horizontalCenter
-              anchors.verticalCenter: memoryRing.verticalCenter
-              anchors.verticalCenterOffset: -Style.space(4)
-              text: root.totalBytes > 0 ? Math.round(root.usedPercent) + "%" : "--"
-              color: root.barForeground
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.space(25)
-              font.bold: true
-              horizontalAlignment: Text.AlignHCenter
-            }
-
-            Text {
-              anchors.horizontalCenter: memoryRing.horizontalCenter
-              anchors.verticalCenter: memoryRing.verticalCenter
-              anchors.verticalCenterOffset: Style.space(20)
-              text: "MEMORY"
-              color: root.barForeground
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-              font.bold: true
-              horizontalAlignment: Text.AlignHCenter
-            }
-
-            Text {
-              anchors.horizontalCenter: parent.horizontalCenter
-              anchors.bottom: parent.bottom
-              text: root.totalBytes > 0
-                ? root.formatBytes(root.usedBytes) + " of " + root.formatBytes(root.totalBytes)
-                : (root.memoryError !== "" ? root.memoryError : "Reading memory…")
-              color: Qt.darker(root.barForeground, 1.5)
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-            }
-          }
-        }
-
-        Rectangle {
-          width: parent.width
-          height: Math.max(1, Style.space(1))
-          color: root.barForeground
-          opacity: 0.12
-        }
-
-        Item {
-          id: constraintRow
-          width: parent.width
-          height: Style.space(22)
-
-          Rectangle {
-            id: levelDot
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            width: Style.space(9)
-            height: width
-            radius: width / 2
-            color: root.levelAccent
           }
 
           Text {
-            anchors.left: levelDot.right
-            anchors.leftMargin: Style.space(7)
-            anchors.right: levelLabel.left
-            anchors.rightMargin: Style.space(8)
-            anchors.verticalCenter: parent.verticalCenter
-            text: root.constraintText !== "" ? root.constraintText : "Waiting for oomd thresholds…"
-            color: root.barForeground
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.body
+            textFormat: Text.PlainText
+            width: parent.width
+            text: root.totalBytes > 0 ? root.levelName.toUpperCase()
+              : (root.memoryError !== "" ? root.memoryError : "Reading memory…")
+            color: root.levelRank > 0 ? root.levelColor : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
+            font.letterSpacing: 1
+            horizontalAlignment: Text.AlignHCenter
+          }
+
+          PanelSeparator { foreground: root.foreground }
+
+          // ---------- RAM, swap and pressure against the oomd kill lines ----------
+          Column {
+            id: limitsSection
+            width: parent.width
+            spacing: Style.space(10)
+
+            LimitRow {
+              width: parent.width
+              label: "RAM"
+              valueText: root.totalBytes > 0
+                ? root.formatUsedOf(root.usedBytes, root.totalBytes) + "  " + Math.round(root.usedPercent) + "%"
+                : "--"
+              ratio: root.usedPercent / 100
+              rank: 0
+            }
+
+            LimitRow {
+              width: parent.width
+              label: "Swap"
+              valueText: root.swapTotalBytes > 0
+                ? Math.round(root.swapPercent) + "% · kill at " + Math.round(root.thresholds.swapLimitPercent) + "%"
+                : "not configured"
+              // The bar ends at the kill line, so a full bar means oomd acts.
+              ratio: root.swapTotalBytes > 0 ? root.swapPercent / root.thresholds.swapLimitPercent : -1
+              rank: root.swapRank
+            }
+
+            LimitRow {
+              width: parent.width
+              label: "Pressure"
+              valueText: Math.round(root.pressurePercent) + "% · kill at "
+                + Math.round(root.thresholds.pressureLimitPercent) + "% for "
+                + Math.round(root.thresholds.pressureDurationSec) + "s"
+              ratio: root.pressurePercent / root.thresholds.pressureLimitPercent
+              rank: root.pressureRank
+            }
+          }
+
+          // ---------- Apps ----------
+          PanelSeparator {
+            visible: root.showsApps
+            foreground: root.foreground
+          }
+
+          Column {
+            id: appsSection
+            visible: root.showsApps
+            width: parent.width
+            spacing: Style.space(10)
+
+            PanelSectionHeader {
+              width: parent.width
+              text: "APPS OOMD COULD KILL"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              visible: root.appRows.length === 0
+              width: parent.width
+              topPadding: Style.space(8)
+              bottomPadding: Style.space(8)
+              text: root.appsError !== ""
+                ? root.appsError
+                : (root.appsLoaded ? "No app cgroups found" : "Reading app memory…")
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              horizontalAlignment: Text.AlignHCenter
+            }
+
+            Repeater {
+              model: root.showsApps ? root.appRows.slice(0, root.appRosterSize) : []
+
+              ListRow {
+                required property var modelData
+                width: appsSection.width
+                name: String(modelData.name)
+                valueText: root.formatRamSwap(modelData.ramBytes, modelData.swapBytes)
+                detailText: root.hasCap(modelData) ? Math.round(root.capFraction(modelData)) + "% of cap" : ""
+                detailAlarming: root.capFraction(modelData) >= 90
+                // Apps protected from oomd are shown dimmed.
+                opacity: modelData.oomdOmit ? 0.5 : 1
+              }
+            }
+          }
+
+          // ---------- Processes ----------
+          PanelSeparator {
+            visible: root.showsProcesses
+            foreground: root.foreground
+          }
+
+          Column {
+            id: processSection
+            visible: root.showsProcesses
+            width: parent.width
+            spacing: Style.space(10)
+
+            PanelSectionHeader {
+              width: parent.width
+              text: "TOP PROCESSES"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              visible: root.processRows.length === 0
+              width: parent.width
+              topPadding: Style.space(8)
+              bottomPadding: Style.space(8)
+              text: root.processError !== ""
+                ? root.processError
+                : (root.processLoading ? "Reading process memory…" : "No process memory data")
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              horizontalAlignment: Text.AlignHCenter
+            }
+
+            Repeater {
+              model: root.showsProcesses ? root.processRows.slice(0, root.processRosterSize) : []
+
+              ListRow {
+                required property var modelData
+                width: processSection.width
+                name: root.processDisplayName(modelData.name)
+                valueText: root.formatBytes(modelData.rssBytes)
+                detailText: (Number(modelData.processCount || 0) > 1 ? modelData.processCount + " processes · " : "")
+                  + Number(modelData.percent || 0).toFixed(1) + "% of RAM"
+              }
+            }
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            visible: root.showsApps
+            width: parent.width
+            topPadding: Style.space(2)
+            text: "dimmed apps are protected from oomd"
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            horizontalAlignment: Text.AlignHCenter
             elide: Text.ElideRight
           }
-
-          Text {
-            id: levelLabel
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            text: root.levelName.toUpperCase()
-            color: root.levelAccent
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.body
-            font.bold: true
-          }
-        }
-
-        Text {
-          width: parent.width
-          text: {
-            var t = levelState.thresholds
-            if (!t) return ""
-            var line = "oomd kills at swap > " + Math.round(t.swapLimitPercent) + "% or app pressure >= "
-              + Math.round(t.pressureLimitPercent) + "% for " + Math.round(t.pressureDurationSec) + "s"
-            if (root.worstPressure && Number(root.worstPressure.fullAvg10) >= 1)
-              line += "\nMost stalled app: " + root.worstPressure.name + " "
-                + Number(root.worstPressure.fullAvg10).toFixed(1) + "%"
-            return line
-          }
-          visible: text !== ""
-          color: root.dimColor
-          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-        }
-
-        Rectangle {
-          width: parent.width
-          height: Math.max(1, Style.space(1))
-          color: root.barForeground
-          opacity: 0.12
-        }
-
-        Repeater {
-          model: root.breakdownRows
-
-          delegate: Item {
-            required property var modelData
-            width: contentColumn.width
-            height: Style.space(22)
-
-            Rectangle {
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              width: Style.space(9)
-              height: width
-              radius: width / 2
-              color: modelData.color
-            }
-
-            Text {
-              anchors.left: parent.left
-              anchors.leftMargin: Style.space(16)
-              anchors.verticalCenter: parent.verticalCenter
-              text: modelData.label
-              color: root.barForeground
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.body
-            }
-
-            Text {
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              text: root.formatBytes(modelData.value)
-              color: root.barForeground
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.body
-              font.bold: true
-              horizontalAlignment: Text.AlignRight
-            }
-          }
-        }
-
-        Rectangle {
-          width: parent.width
-          height: Math.max(1, Style.space(1))
-          color: root.barForeground
-          opacity: 0.12
-        }
-
-        Item {
-          visible: root.showsApps
-          width: parent.width
-          height: visible ? Style.space(22) : 0
-
-          Text {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            text: "APPS (OOMD CANDIDATES)"
-            color: root.appColor
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.body
-            font.bold: true
-          }
-        }
-
-        Text {
-          visible: root.showsApps && root.appRows.length === 0
-          width: parent.width
-          height: visible ? Style.space(46) : 0
-          text: root.appsError !== ""
-            ? root.appsError
-            : (root.appsLoaded ? "No app cgroups found" : "Reading app memory…")
-          color: Qt.darker(root.barForeground, 1.35)
-          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-          font.pixelSize: Style.font.body
-          horizontalAlignment: Text.AlignHCenter
-          verticalAlignment: Text.AlignVCenter
-        }
-
-        Repeater {
-          model: root.showsApps ? root.appRows.slice(0, root.appRosterSize) : []
-
-          delegate: Item {
-            required property var modelData
-            width: contentColumn.width
-            height: Style.space(27)
-            opacity: modelData.oomdOmit ? 0.55 : 1
-
-            Item {
-              id: appIconSlot
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              width: Style.space(22)
-              height: parent.height
-
-              Image {
-                id: appIcon
-                anchors.centerIn: parent
-                width: Style.space(18)
-                height: width
-                fillMode: Image.PreserveAspectFit
-                source: root.appIconSource(modelData.name)
-                asynchronous: true
-              }
-
-              Text {
-                anchors.centerIn: parent
-                visible: appIcon.status !== Image.Ready
-                text: "󰣆"
-                color: root.barForeground
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.body
-              }
-            }
-
-            Text {
-              anchors.left: appIconSlot.right
-              anchors.leftMargin: Style.space(7)
-              anchors.right: appCapLabel.left
-              anchors.rightMargin: Style.space(6)
-              anchors.verticalCenter: parent.verticalCenter
-              text: String(modelData.name)
-                + (Number(modelData.unitCount || 0) > 1 ? "  ·  " + modelData.unitCount : "")
-              color: root.barForeground
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.body
-              elide: Text.ElideRight
-            }
-
-            Text {
-              id: appCapLabel
-              anchors.right: appSwapLabel.left
-              anchors.verticalCenter: parent.verticalCenter
-              width: Style.space(52)
-              text: root.capLabel(modelData)
-              color: root.capFraction(modelData) >= 80 ? root.urgentColor : root.dimColor
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-              horizontalAlignment: Text.AlignRight
-            }
-
-            Text {
-              id: appSwapLabel
-              anchors.right: appRamLabel.left
-              anchors.verticalCenter: parent.verticalCenter
-              width: Style.space(70)
-              text: Number(modelData.swapBytes || 0) > 0 ? "+" + root.formatBytes(modelData.swapBytes) : ""
-              color: Qt.darker(root.barForeground, 1.25)
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-              horizontalAlignment: Text.AlignRight
-            }
-
-            Text {
-              id: appRamLabel
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              width: Style.space(66)
-              text: root.formatBytes(modelData.ramBytes)
-              color: root.barForeground
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.body
-              font.bold: true
-              horizontalAlignment: Text.AlignRight
-            }
-          }
-        }
-
-        Text {
-          visible: root.showsApps && root.appRows.length > 0
-          width: parent.width
-          height: visible ? implicitHeight : 0
-          text: "RAM, +swap, fuller of RAM or swap cap · dimmed = protected"
-          color: root.dimColor
-          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-          font.pixelSize: Style.font.caption
-          horizontalAlignment: Text.AlignHCenter
-        }
-
-        Rectangle {
-          visible: root.showsApps && root.showsProcesses
-          width: parent.width
-          height: visible ? Math.max(1, Style.space(1)) : 0
-          color: root.barForeground
-          opacity: 0.12
-        }
-
-        Item {
-          visible: root.showsProcesses
-          width: parent.width
-          height: visible ? Style.space(22) : 0
-
-          Text {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            text: "TOP PROCESSES"
-            color: root.appColor
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.body
-            font.bold: true
-          }
-
-          Rectangle {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            width: Style.space(7)
-            height: width
-            radius: width / 2
-            color: root.appColor
-            opacity: root.processLoading ? 0.45 : 0.9
-
-            SequentialAnimation on opacity {
-              running: root.opened && root.processLoading
-              loops: Animation.Infinite
-              NumberAnimation { to: 0.25; duration: 450 }
-              NumberAnimation { to: 0.9; duration: 450 }
-            }
-          }
-        }
-
-        Text {
-          visible: root.showsProcesses && root.processRows.length === 0
-          width: parent.width
-          height: visible ? Style.space(46) : 0
-          text: root.processError !== ""
-            ? root.processError
-            : (root.processLoading ? "Reading process memory…" : "No process memory data")
-          color: Qt.darker(root.barForeground, 1.35)
-          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-          font.pixelSize: Style.font.body
-          horizontalAlignment: Text.AlignHCenter
-          verticalAlignment: Text.AlignVCenter
-        }
-
-        Repeater {
-          model: root.showsProcesses ? root.processRows.slice(0, root.processRosterSize) : []
-
-          delegate: Item {
-            required property var modelData
-            width: contentColumn.width
-            height: Style.space(27)
-
-            Item {
-              id: processIconSlot
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              width: Style.space(22)
-              height: parent.height
-
-              Image {
-                id: processIcon
-                anchors.centerIn: parent
-                width: Style.space(18)
-                height: width
-                fillMode: Image.PreserveAspectFit
-                source: root.processIconSource(modelData.name)
-                asynchronous: true
-              }
-
-              Text {
-                anchors.centerIn: parent
-                visible: processIcon.status !== Image.Ready
-                text: "󰣆"
-                color: root.barForeground
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.body
-              }
-            }
-
-            Text {
-              anchors.left: processIconSlot.right
-              anchors.leftMargin: Style.space(7)
-              anchors.right: processPercentLabel.left
-              anchors.rightMargin: Style.space(10)
-              anchors.verticalCenter: parent.verticalCenter
-              text: root.processDisplayName(modelData.name)
-                + (Number(modelData.processCount || 0) > 1 ? "  ·  " + modelData.processCount : "")
-              color: root.barForeground
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.body
-              elide: Text.ElideRight
-            }
-
-            Text {
-              id: processPercentLabel
-              anchors.right: processMemoryLabel.left
-              anchors.verticalCenter: parent.verticalCenter
-              width: Style.space(56)
-              text: Number(modelData.percent || 0).toFixed(1) + "%"
-              color: Qt.darker(root.barForeground, 1.25)
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.body
-              horizontalAlignment: Text.AlignRight
-            }
-
-            Text {
-              id: processMemoryLabel
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              width: Style.space(82)
-              text: root.formatBytes(modelData.rssBytes)
-              color: root.barForeground
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.body
-              font.bold: true
-              horizontalAlignment: Text.AlignRight
-            }
-          }
-        }
-
-        Rectangle {
-          width: parent.width
-          height: Math.max(1, Style.space(1))
-          color: root.barForeground
-          opacity: 0.12
-        }
-
-        Item {
-          width: parent.width
-          height: Style.space(22)
-
-          Text {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            text: "Swap in"
-            color: root.barForeground
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.body
-          }
-
-          Text {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            text: root.formatRate(root.swapInBytesPerSecond)
-            color: root.barForeground
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.body
-            font.bold: true
-          }
-        }
-
-        Item {
-          width: parent.width
-          height: Style.space(22)
-
-          Text {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            text: "Swap out"
-            color: root.barForeground
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.body
-          }
-
-          Text {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            text: root.formatRate(root.swapOutBytesPerSecond)
-            color: root.barForeground
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.body
-            font.bold: true
-          }
-        }
-
-        Rectangle {
-          width: parent.width
-          height: Math.max(1, Style.space(1))
-          color: root.barForeground
-          opacity: 0.12
-        }
-
-        Item {
-          width: parent.width
-          height: Style.space(22)
-
-          Text {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            text: "SWAP"
-            color: root.appColor
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.body
-            font.bold: true
-          }
-
-          Text {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            text: root.swapTotalBytes > 0
-              ? root.formatBytes(root.swapUsedBytes) + " of " + root.formatBytes(root.swapTotalBytes)
-              : "Not configured"
-            color: root.barForeground
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.body
-            font.bold: true
-          }
-        }
-
-        Text {
-          width: parent.width
-          text: root.showsProcesses ? "Processes are grouped RSS · R to refresh" : "R to refresh"
-          color: Qt.darker(root.barForeground, 1.5)
-          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-          font.pixelSize: Style.font.caption
-          horizontalAlignment: Text.AlignHCenter
         }
       }
+    }
+  }
+
+  // A ring: a track circle with one arc of the value on top and the figure and
+  // its name in the middle.
+  component Ring: Item {
+    id: ring
+    property real value: 0
+    property string valueText: ""
+    property string caption: ""
+    property color ringColor: root.foreground
+
+    width: Style.space(104)
+    height: width
+
+    Canvas {
+      id: ringCanvas
+      anchors.fill: parent
+      property real progress: root.clamp(ring.value, 0, 1)
+      property color trackColor: root.track
+      property color arcColor: ring.ringColor
+
+      onProgressChanged: requestPaint()
+      onTrackColorChanged: requestPaint()
+      onArcColorChanged: requestPaint()
+      onWidthChanged: requestPaint()
+      onHeightChanged: requestPaint()
+      onPaint: {
+        var context = getContext("2d")
+        context.clearRect(0, 0, width, height)
+        var ringWidth = Style.spaceReal(6)
+        var radius = Math.max(0, Math.min(width, height) / 2 - ringWidth / 2)
+        var start = -Math.PI / 2
+        context.lineWidth = ringWidth
+        context.lineCap = "butt"
+
+        context.beginPath()
+        context.strokeStyle = trackColor
+        context.arc(width / 2, height / 2, radius, start, start + Math.PI * 2)
+        context.stroke()
+
+        if (progress > 0.004) {
+          context.beginPath()
+          context.strokeStyle = arcColor
+          context.arc(width / 2, height / 2, radius, start, start + Math.PI * 2 * progress)
+          context.stroke()
+        }
+      }
+    }
+
+    Column {
+      anchors.centerIn: parent
+      spacing: Style.spacing.xxs
+
+      Text {
+        textFormat: Text.PlainText
+        anchors.horizontalCenter: parent.horizontalCenter
+        text: ring.valueText
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.display
+        font.bold: true
+      }
+
+      Text {
+        textFormat: Text.PlainText
+        anchors.horizontalCenter: parent.horizontalCenter
+        text: ring.caption
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+    }
+  }
+
+  // The Agents popup's thin usage bar: a track with the value on it.
+  component Meter: Item {
+    id: meter
+    property real value: -1
+    property color fillColor: root.foreground
+    property real thickness: Math.max(Style.space(4), Math.round(Style.spacing.controlHeight * 0.14))
+
+    implicitHeight: thickness
+
+    Rectangle {
+      id: meterTrack
+      anchors.fill: parent
+      radius: height / 2
+      color: root.track
+    }
+
+    Rectangle {
+      anchors.left: meterTrack.left
+      anchors.verticalCenter: meterTrack.verticalCenter
+      height: meterTrack.height
+      radius: meterTrack.radius
+      width: meterTrack.width * root.clamp(meter.value, 0, 1)
+      color: meter.fillColor
+
+      Behavior on width {
+        NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+      }
+    }
+  }
+
+  // A label and figure over a thin bar. `rank` colors the bar when this
+  // constraint is the one in warn (1) or critical (2).
+  component LimitRow: Column {
+    id: limitRow
+    property string label: ""
+    property string valueText: ""
+    property real ratio: -1
+    property int rank: 0
+
+    spacing: Style.space(6)
+
+    Item {
+      width: parent.width
+      implicitHeight: Math.max(limitLabel.implicitHeight, limitValue.implicitHeight)
+
+      Text {
+        id: limitLabel
+        textFormat: Text.PlainText
+        text: limitRow.label
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
+      }
+
+      Text {
+        id: limitValue
+        textFormat: Text.PlainText
+        text: limitRow.valueText
+        color: limitRow.rank > 0 ? root.rankColor(limitRow.rank) : root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        elide: Text.ElideLeft
+        anchors.left: limitLabel.right
+        anchors.leftMargin: Style.spacing.lg
+        anchors.right: parent.right
+        horizontalAlignment: Text.AlignRight
+        anchors.verticalCenter: parent.verticalCenter
+      }
+    }
+
+    Meter {
+      visible: limitRow.ratio >= 0
+      width: parent.width
+      value: limitRow.ratio
+      fillColor: root.rankColor(limitRow.rank)
+    }
+  }
+
+  // Plain list row: name on the left, figure on the right, and an optional dim
+  // second line under the name.
+  component ListRow: Column {
+    id: listRow
+    property string name: ""
+    property string valueText: ""
+    property string detailText: ""
+    property bool detailAlarming: false
+
+    spacing: Style.spacing.xxs
+
+    Item {
+      width: parent.width
+      implicitHeight: Math.max(rowName.implicitHeight, rowValue.implicitHeight)
+
+      Text {
+        id: rowName
+        textFormat: Text.PlainText
+        text: listRow.name
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        elide: Text.ElideRight
+        anchors.left: parent.left
+        anchors.right: rowValue.left
+        anchors.rightMargin: Style.spacing.lg
+        anchors.verticalCenter: parent.verticalCenter
+      }
+
+      Text {
+        id: rowValue
+        textFormat: Text.PlainText
+        text: listRow.valueText
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+      }
+    }
+
+    Text {
+      textFormat: Text.PlainText
+      visible: listRow.detailText !== ""
+      width: parent.width
+      text: listRow.detailText
+      color: listRow.detailAlarming ? root.urgent : root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      elide: Text.ElideRight
     }
   }
 

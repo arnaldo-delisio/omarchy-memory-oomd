@@ -14,19 +14,17 @@ app_slice="$root/sys/fs/cgroup/user.slice/user-$uid.slice/user@$uid.service/app.
 
 # Only pass files that exist, so a fixture or kernel without one still works.
 files=()
-for f in "$root/proc/meminfo" "$root/proc/pressure/memory" "$root/proc/vmstat"; do
+for f in "$root/proc/meminfo" "$root/proc/pressure/memory"; do
   [[ -r $f ]] && files+=("$f")
 done
 app_psi=""
 [[ -r $app_slice/memory.pressure ]] && app_psi="$app_slice/memory.pressure" && files+=("$app_psi")
 
-page_size=$(getconf PAGESIZE 2>/dev/null || printf '4096')
-[[ $page_size =~ ^[0-9]+$ ]] || page_size=4096
 sampled_ms=$(date +%s%3N)
 
-awk -v page_size="$page_size" -v sampled_ms="$sampled_ms" \
+awk -v sampled_ms="$sampled_ms" \
   -v f_meminfo="$root/proc/meminfo" -v f_psi="$root/proc/pressure/memory" \
-  -v f_vmstat="$root/proc/vmstat" -v f_app="$app_psi" '
+  -v f_app="$app_psi" '
   FILENAME == f_meminfo {
     value = $2 * 1024
     if ($1 == "MemTotal:") total = value
@@ -41,7 +39,7 @@ awk -v page_size="$page_size" -v sampled_ms="$sampled_ms" \
     next
   }
 
-  # System-wide PSI: "some" feeds the ring, "full" is what oomd keys on.
+  # System-wide PSI: "some" and "full" avg10.
   FILENAME == f_psi && ($1 == "some" || $1 == "full") {
     for (field = 2; field <= NF; field++) {
       if ($field ~ /^avg10=/) {
@@ -64,11 +62,6 @@ awk -v page_size="$page_size" -v sampled_ms="$sampled_ms" \
       }
     }
     next
-  }
-
-  FILENAME == f_vmstat {
-    if ($1 == "pswpin") swap_in = $2
-    else if ($1 == "pswpout") swap_out = $2
   }
 
   END {
@@ -98,7 +91,6 @@ awk -v page_size="$page_size" -v sampled_ms="$sampled_ms" \
 
     printf "{"
     printf "\"sampledMs\":%.0f,", sampled_ms
-    printf "\"pageSize\":%.0f,", page_size
     printf "\"totalBytes\":%.0f,", total
     printf "\"usedBytes\":%.0f,", used
     printf "\"availableBytes\":%.0f,", available
@@ -108,8 +100,6 @@ awk -v page_size="$page_size" -v sampled_ms="$sampled_ms" \
     printf "\"freeBytes\":%.0f,", free
     printf "\"swapTotalBytes\":%.0f,", swap_total
     printf "\"swapUsedBytes\":%.0f,", swap_used
-    printf "\"swapInPages\":%.0f,", swap_in
-    printf "\"swapOutPages\":%.0f,", swap_out
     printf "\"swapUsedPercent\":%.2f,", swap_percent
     printf "\"pressurePercent\":%.2f,", pressure
     printf "\"pressureFullPercent\":%.2f,", pressure_full

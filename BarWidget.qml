@@ -203,18 +203,6 @@ BarWidget {
       if (!next || Number(next.totalBytes || 0) <= 0)
         throw new Error("Missing memory total")
 
-      var previous = memorySnapshot || ({})
-      var elapsedMs = Number(next.sampledMs || 0) - Number(previous.sampledMs || 0)
-      var pageSize = Number(next.pageSize || 4096)
-
-      function counterRate(current, old) {
-        var delta = Number(current || 0) - Number(old || 0)
-        if (elapsedMs <= 0 || delta < 0) return 0
-        return delta * pageSize * 1000 / elapsedMs
-      }
-
-      next.swapInBytesPerSecond = counterRate(next.swapInPages, previous.swapInPages)
-      next.swapOutBytesPerSecond = counterRate(next.swapOutPages, previous.swapOutPages)
       memorySnapshot = next
       memoryError = ""
       applyLevel(next)

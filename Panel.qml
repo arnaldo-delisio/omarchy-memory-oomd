@@ -65,14 +65,13 @@ Panel {
   readonly property color freeColor: Qt.rgba(barForeground.r, barForeground.g, barForeground.b, 0.22)
   readonly property color urgentColor: bar ? bar.urgent : Color.urgent
   readonly property color dimColor: Qt.darker(barForeground, 1.5)
+  // Level colors come from the bar widget (BarWidget.levelColor), so the panel
+  // shows exactly what the bar icon shows: the bar foreground, the theme's
+  // orange for warn, bar.urgent for critical.
+  readonly property color levelAccent: hostWidget ? hostWidget.levelColor : barForeground
   // The pressure ring keeps its accent color while memory is fine, then follows
-  // the level: urgent when critical, halfway there when warn.
-  readonly property color pressureColor: levelRank >= 2
-    ? urgentColor
-    : (levelRank === 1 ? mixColor(Color.accent, urgentColor, 0.55) : Color.accent)
-  readonly property color levelAccent: levelRank >= 2
-    ? urgentColor
-    : (levelRank === 1 ? mixColor(barForeground, urgentColor, 0.55) : barForeground)
+  // the level.
+  readonly property color pressureColor: levelRank > 0 ? levelAccent : Color.accent
 
   readonly property var memorySegments: [
     { value: appBytes, color: appColor },
@@ -91,14 +90,6 @@ Panel {
     var value = String(url || "")
     if (value.indexOf("file://") === 0) value = value.substring(7)
     try { return decodeURIComponent(value) } catch (error) { return value }
-  }
-
-  function mixColor(from, to, amount) {
-    return Qt.rgba(
-      from.r + (to.r - from.r) * amount,
-      from.g + (to.g - from.g) * amount,
-      from.b + (to.b - from.b) * amount,
-      from.a + (to.a - from.a) * amount)
   }
 
   function open() {

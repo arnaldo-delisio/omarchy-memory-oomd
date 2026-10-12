@@ -60,6 +60,8 @@ The color follows the oomd level, not the RAM figure:
 | warn | the theme's orange | `orange` in the theme's `colors.toml`, else its `yellow` |
 | critical | the theme's red | `bar.urgent` (`red` in `colors.toml`, or `[bar] active` in `shell.toml`) |
 
+The panel uses the same colors for its pressure ring, level dot and level label.
+
 The shell's own color API does not expose orange or yellow, so the widget reads `colors.toml` of the current theme itself, again after a theme switch and every 5 minutes. A theme with neither key gets a derived warn color: the urgent color turned to an orange hue (about 32 degrees) with at least 60% saturation. Themes that define `red` and `orange` oddly (for example a monochrome theme) show those colors as given.
 
 The old `width` setting only sized the `MEM` label and meter, so it was removed. The widget takes the standard icon slot of the bar, which follows the theme's `icon-slot` size.

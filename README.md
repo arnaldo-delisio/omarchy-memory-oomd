@@ -2,9 +2,9 @@
 
 A fork of [egoist/omarchy-memory-usage](https://github.com/egoist/omarchy-memory-usage), the iStat Menus-style memory widget for the Omarchy bar. Credit for the widget, the rings, the process list and the overall design goes to EGOIST. This fork keeps all of that and makes the widget aware of systemd-oomd, the daemon that kills apps on Omarchy when memory runs short.
 
-![Memory Usage preview](preview.png)
+![Memory (oomd) preview: the bar chip in normal, warn and critical, and the popup in normal and warn](preview.png)
 
-The preview image is from the upstream widget. It shows the upstream bar item (the `MEM` label with a vertical meter) and the upstream panel; this fork replaced the bar item with the RAM chip icon described under "The bar icon" and has not recreated the preview.
+The preview uses mock data. It shows the bar chip at three levels (normal, warn, critical) above the popup in the normal state and in the warn state.
 
 ## What it adds over upstream
 
@@ -17,36 +17,29 @@ The preview image is from the upstream widget. It shows the upstream bar item (t
 
 ## Install
 
-From git, once the repository is published somewhere you can clone from:
-
 ```sh
-omarchy plugin add <git-url> --enable
+omarchy plugin add https://github.com/arnaldo-delisio/omarchy-memory-oomd.git --enable
 ```
 
-Then place it where you want it, for example right after the agents widget:
+The widget lands in the right section of the bar. To place it somewhere else, for example right after the agents widget:
 
 ```sh
 omarchy plugin enable io.github.arnaldo-delisio.memory-oomd --section right --after omarchy.agents
 ```
 
-From a local checkout, which is how this machine installs it:
-
-```sh
-git clone <this checkout> ~/Work/omarchy-memory-oomd
-~/Work/omarchy-memory-oomd/scripts/install-local
-omarchy plugin enable io.github.arnaldo-delisio.memory-oomd --section right --after omarchy.agents
-```
-
-`scripts/install-local` validates the plugin, then copies it without `.git` or `tests` to `~/.config/omarchy/plugins/io.github.arnaldo-delisio.memory-oomd/`. Run it again after any change. The shell reloads plugin files when they change. It uses `rsync` instead of `omarchy plugin add file://...` so the install is a plain copy that you can update in one command.
+Update it later with `omarchy plugin update io.github.arnaldo-delisio.memory-oomd`.
 
 ## Remove
 
 ```sh
-omarchy plugin disable io.github.arnaldo-delisio.memory-oomd
-rm -r ~/.config/omarchy/plugins/io.github.arnaldo-delisio.memory-oomd
+omarchy plugin remove io.github.arnaldo-delisio.memory-oomd
 ```
 
-For a git-installed copy, `omarchy plugin remove io.github.arnaldo-delisio.memory-oomd` does both. If you also run the upstream plugin, the two do not conflict: the ids differ.
+That disables the plugin and deletes its folder. To keep the files and only hide the widget, run `omarchy plugin disable io.github.arnaldo-delisio.memory-oomd` instead. Removing the plugin changes no other configuration: it writes nothing outside its own folder and the bar settings you set for it. If you also run the upstream plugin, the two do not conflict: the ids differ.
+
+## Development
+
+Run `scripts/install-local` from a checkout to validate the plugin and copy it, without `.git` or `tests`, to `~/.config/omarchy/plugins/io.github.arnaldo-delisio.memory-oomd/`. Run it again after any change; the shell reloads plugin files when they change. It uses `rsync`, so the install is a plain copy that updates in one command. It is a developer convenience and the plugin does not use it at runtime.
 
 ## The popup
 
@@ -140,9 +133,9 @@ These are unchanged from upstream. Overall usage is `MemTotal - MemAvailable` fr
 
 ## Dependencies and security
 
-The plugin runs unsandboxed with your user permissions, like every Omarchy shell plugin. It does not use `sudo`, install packages, start services or access the network.
+The plugin runs unsandboxed with your user permissions, like every Omarchy shell plugin. No sudo or pkexec is required. It does not install packages, start services or access the network.
 
-It reads `/proc` and `/sys/fs/cgroup`, and uses commands from a standard Omarchy install: Bash, `jq`, `awk`, `ps`, `sort`, `head`, `date` and `notify-send` (libnotify). `getfattr` (package `attr`) is optional: without it the widget cannot tell which apps are protected with `user.oomd_omit` and shows none as protected. `scripts/install-local` also needs `rsync`, and the tests need `node`.
+It reads `/proc` and `/sys/fs/cgroup`, and uses commands from a standard Omarchy install: Bash, `jq`, `awk`, `ps`, `sort`, `head`, `date` and `notify-send` (libnotify). `getfattr` (package `attr`) is optional: without it the widget cannot tell which apps are protected with `user.oomd_omit` and shows none as protected. `scripts/install-local` (development only) also needs `rsync`, and the tests need `node`.
 
 ## Tests
 
@@ -151,6 +144,11 @@ tests/run
 ```
 
 The shell tests build fixture trees (a fake `/proc`, `/sys/fs/cgroup` and oomd config files) and point the scripts at them with `MEMORY_OOMD_ROOT`, which defaults to `/`. The level logic in `Levels.js` is tested with node. `tests/run` exits non-zero if anything fails.
+
+## Changelog
+
+- **1.2.0** (2026-10-12): first public release of the fork. oomd levels, kill-line bars, per-app memory by cgroup, notifications, adaptive polling, the RAM chip bar icon with the `iconSize` setting, the restyled popup, tests, a new preview image, and install and removal instructions for the plugin marketplace. 1.1.0 was an internal version and was not published.
+- **1.0.0**: upstream's `dev.egoist.memory-usage` by EGOIST.
 
 ## License
 

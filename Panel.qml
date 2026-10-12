@@ -22,6 +22,22 @@ Panel {
     ? hostWidget.memorySnapshot
     : ({})
   readonly property string memoryError: hostWidget ? String(hostWidget.memoryError || "") : ""
+  readonly property var levelState: hostWidget && hostWidget.levelState ? hostWidget.levelState : ({})
+  readonly property int levelRank: Number(levelState.rank || 0)
+  readonly property string levelName: String(levelState.level || "normal")
+  readonly property string constraintText: levelState.binding ? String(levelState.binding.text || "") : ""
+  readonly property var appSnapshot: hostWidget && hostWidget.appSnapshot ? hostWidget.appSnapshot : ({})
+  readonly property var appRows: appSnapshot.apps && Array.isArray(appSnapshot.apps) ? appSnapshot.apps : []
+  readonly property bool appsLoaded: hostWidget ? hostWidget.appsLoaded === true : false
+  readonly property string appsError: hostWidget ? String(hostWidget.appsError || "") : ""
+  readonly property string listMode: hostWidget ? String(hostWidget.listMode || "apps") : "apps"
+  readonly property bool showsApps: listMode !== "processes"
+  readonly property bool showsProcesses: listMode !== "apps"
+  readonly property int appRosterSize: {
+    var value = Number(setting("appCount", 6))
+    return isFinite(value) ? Math.max(1, Math.min(12, Math.round(value))) : 6
+  }
+  readonly property var worstPressure: appSnapshot.maxPressure ? appSnapshot.maxPressure : null
   readonly property int processRosterSize: {
     var value = Number(setting("processCount", 5))
     return isFinite(value) ? Math.max(1, Math.min(10, Math.round(value))) : 5
@@ -47,7 +63,16 @@ Panel {
   readonly property color kernelColor: "#f05a9d"
   readonly property color cacheColor: "#ffc11a"
   readonly property color freeColor: Qt.rgba(barForeground.r, barForeground.g, barForeground.b, 0.22)
-  readonly property color pressureColor: Color.accent
+  readonly property color urgentColor: bar ? bar.urgent : Color.urgent
+  readonly property color dimColor: Qt.darker(barForeground, 1.5)
+  // The pressure ring keeps its accent color while memory is fine, then follows
+  // the level: urgent when critical, halfway there when warn.
+  readonly property color pressureColor: levelRank >= 2
+    ? urgentColor
+    : (levelRank === 1 ? mixColor(Color.accent, urgentColor, 0.55) : Color.accent)
+  readonly property color levelAccent: levelRank >= 2
+    ? urgentColor
+    : (levelRank === 1 ? mixColor(barForeground, urgentColor, 0.55) : barForeground)
 
   readonly property var memorySegments: [
     { value: appBytes, color: appColor },
@@ -68,10 +93,22 @@ Panel {
     try { return decodeURIComponent(value) } catch (error) { return value }
   }
 
+  function mixColor(from, to, amount) {
+    return Qt.rgba(
+      from.r + (to.r - from.r) * amount,
+      from.g + (to.g - from.g) * amount,
+      from.b + (to.b - from.b) * amount,
+      from.a + (to.a - from.a) * amount)
+  }
+
   function open() {
     processError = ""
     processLoading = !processHasSnapshot
     root.controller.show()
+    if (hostWidget) {
+      hostWidget.refreshConfig()
+      if (showsApps) hostWidget.refreshApps()
+    }
     Qt.callLater(root.refreshProcesses)
   }
 
@@ -86,7 +123,33 @@ Panel {
   }
 
   function refreshProcesses() {
-    if (!processMemory.running) processMemory.running = true
+    if (showsProcesses && !processMemory.running) processMemory.running = true
+  }
+
+  function refreshAll() {
+    refreshProcesses()
+    if (hostWidget && showsApps) hostWidget.refreshApps()
+  }
+
+  function appIconSource(name) {
+    if (String(name || "").indexOf("terminal") === 0) {
+      var terminalIcon = Quickshell.iconPath("utilities-terminal", true)
+      if (terminalIcon) return terminalIcon
+    }
+    return processIconSource(name)
+  }
+
+  // "63% of cap" for the tighter of the RAM cap and the swap cap, "" if uncapped.
+  function capLabel(app) {
+    var ram = app.capPercent === null || app.capPercent === undefined ? -1 : Number(app.capPercent)
+    var swap = app.swapCapPercent === null || app.swapCapPercent === undefined ? -1 : Number(app.swapCapPercent)
+    if (ram < 0 && swap < 0) return ""
+    if (swap > ram) return Math.round(swap) + "% of swap cap"
+    return Math.round(ram) + "% of cap"
+  }
+
+  function capFraction(app) {
+    return Math.max(Number(app.capPercent || 0), Number(app.swapCapPercent || 0))
   }
 
   function updateProcesses(raw) {
@@ -192,7 +255,7 @@ Panel {
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(text) {
-        if (text === "r" || text === "R") root.refreshProcesses()
+        if (text === "r" || text === "R") root.refreshAll()
       }
 
       Column {
@@ -251,7 +314,7 @@ Panel {
               anchors.verticalCenter: pressureRing.verticalCenter
               anchors.verticalCenterOffset: -Style.space(4)
               text: root.totalBytes > 0 ? Math.round(root.pressurePercent) + "%" : "--"
-              color: root.barForeground
+              color: root.levelAccent
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.space(25)
               font.bold: true
@@ -374,6 +437,72 @@ Panel {
           opacity: 0.12
         }
 
+        Item {
+          id: constraintRow
+          width: parent.width
+          height: Style.space(22)
+
+          Rectangle {
+            id: levelDot
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(9)
+            height: width
+            radius: width / 2
+            color: root.levelAccent
+          }
+
+          Text {
+            anchors.left: levelDot.right
+            anchors.leftMargin: Style.space(7)
+            anchors.right: levelLabel.left
+            anchors.rightMargin: Style.space(8)
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.constraintText !== "" ? root.constraintText : "Waiting for oomd thresholds…"
+            color: root.barForeground
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.body
+            elide: Text.ElideRight
+          }
+
+          Text {
+            id: levelLabel
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.levelName.toUpperCase()
+            color: root.levelAccent
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.body
+            font.bold: true
+          }
+        }
+
+        Text {
+          width: parent.width
+          text: {
+            var t = levelState.thresholds
+            if (!t) return ""
+            var line = "oomd kills at swap > " + Math.round(t.swapLimitPercent) + "% or app pressure >= "
+              + Math.round(t.pressureLimitPercent) + "% for " + Math.round(t.pressureDurationSec) + "s"
+            if (root.worstPressure && Number(root.worstPressure.fullAvg10) >= 1)
+              line += "\nMost stalled app: " + root.worstPressure.name + " "
+                + Number(root.worstPressure.fullAvg10).toFixed(1) + "%"
+            return line
+          }
+          visible: text !== ""
+          color: root.dimColor
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+        }
+
+        Rectangle {
+          width: parent.width
+          height: Math.max(1, Style.space(1))
+          color: root.barForeground
+          opacity: 0.12
+        }
+
         Repeater {
           model: root.breakdownRows
 
@@ -422,8 +551,147 @@ Panel {
         }
 
         Item {
+          visible: root.showsApps
           width: parent.width
-          height: Style.space(22)
+          height: visible ? Style.space(22) : 0
+
+          Text {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: "APPS (OOMD CANDIDATES)"
+            color: root.appColor
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.body
+            font.bold: true
+          }
+        }
+
+        Text {
+          visible: root.showsApps && root.appRows.length === 0
+          width: parent.width
+          height: visible ? Style.space(46) : 0
+          text: root.appsError !== ""
+            ? root.appsError
+            : (root.appsLoaded ? "No app cgroups found" : "Reading app memory…")
+          color: Qt.darker(root.barForeground, 1.35)
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.pixelSize: Style.font.body
+          horizontalAlignment: Text.AlignHCenter
+          verticalAlignment: Text.AlignVCenter
+        }
+
+        Repeater {
+          model: root.showsApps ? root.appRows.slice(0, root.appRosterSize) : []
+
+          delegate: Item {
+            required property var modelData
+            width: contentColumn.width
+            height: Style.space(27)
+            opacity: modelData.oomdOmit ? 0.55 : 1
+
+            Item {
+              id: appIconSlot
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(22)
+              height: parent.height
+
+              Image {
+                id: appIcon
+                anchors.centerIn: parent
+                width: Style.space(18)
+                height: width
+                fillMode: Image.PreserveAspectFit
+                source: root.appIconSource(modelData.name)
+                asynchronous: true
+              }
+
+              Text {
+                anchors.centerIn: parent
+                visible: appIcon.status !== Image.Ready
+                text: "󰣆"
+                color: root.barForeground
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.body
+              }
+            }
+
+            Text {
+              anchors.left: appIconSlot.right
+              anchors.leftMargin: Style.space(7)
+              anchors.right: appCapLabel.left
+              anchors.rightMargin: Style.space(6)
+              anchors.verticalCenter: parent.verticalCenter
+              text: String(modelData.name)
+                + (Number(modelData.unitCount || 0) > 1 ? "  ·  " + modelData.unitCount : "")
+              color: root.barForeground
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.body
+              elide: Text.ElideRight
+            }
+
+            Text {
+              id: appCapLabel
+              anchors.right: appSwapLabel.left
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(86)
+              text: root.capLabel(modelData)
+              color: root.capFraction(modelData) >= 80 ? root.urgentColor : root.dimColor
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              horizontalAlignment: Text.AlignRight
+            }
+
+            Text {
+              id: appSwapLabel
+              anchors.right: appRamLabel.left
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(70)
+              text: Number(modelData.swapBytes || 0) > 0 ? "+" + root.formatBytes(modelData.swapBytes) : ""
+              color: Qt.darker(root.barForeground, 1.25)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              horizontalAlignment: Text.AlignRight
+            }
+
+            Text {
+              id: appRamLabel
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(66)
+              text: root.formatBytes(modelData.ramBytes)
+              color: root.barForeground
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.body
+              font.bold: true
+              horizontalAlignment: Text.AlignRight
+            }
+          }
+        }
+
+        Text {
+          visible: root.showsApps && root.appRows.length > 0
+          width: parent.width
+          height: visible ? implicitHeight : 0
+          text: "RAM, +swap, cap use · dimmed apps are protected from oomd"
+          color: root.dimColor
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.pixelSize: Style.font.caption
+          horizontalAlignment: Text.AlignHCenter
+        }
+
+        Rectangle {
+          visible: root.showsApps && root.showsProcesses
+          width: parent.width
+          height: visible ? Math.max(1, Style.space(1)) : 0
+          color: root.barForeground
+          opacity: 0.12
+        }
+
+        Item {
+          visible: root.showsProcesses
+          width: parent.width
+          height: visible ? Style.space(22) : 0
 
           Text {
             anchors.left: parent.left
@@ -454,9 +722,9 @@ Panel {
         }
 
         Text {
-          visible: root.processRows.length === 0
+          visible: root.showsProcesses && root.processRows.length === 0
           width: parent.width
-          height: Style.space(46)
+          height: visible ? Style.space(46) : 0
           text: root.processError !== ""
             ? root.processError
             : (root.processLoading ? "Reading process memory…" : "No process memory data")
@@ -468,7 +736,7 @@ Panel {
         }
 
         Repeater {
-          model: root.processRows.slice(0, root.processRosterSize)
+          model: root.showsProcesses ? root.processRows.slice(0, root.processRosterSize) : []
 
           delegate: Item {
             required property var modelData
@@ -634,7 +902,7 @@ Panel {
 
         Text {
           width: parent.width
-          text: "Processes are grouped RSS · R to refresh"
+          text: root.showsProcesses ? "Processes are grouped RSS · R to refresh" : "R to refresh"
           color: Qt.darker(root.barForeground, 1.5)
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.caption
@@ -669,7 +937,7 @@ Panel {
 
   Timer {
     interval: 2000
-    running: root.opened
+    running: root.opened && root.showsProcesses
     repeat: true
     triggeredOnStart: true
     onTriggered: root.refreshProcesses()

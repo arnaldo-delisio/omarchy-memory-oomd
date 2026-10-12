@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Runs every test. Exits non-zero if any of them fails.
+set -u
+cd "$(dirname "$0")/.."
+failed=()
+
+run() {
+  local name=$1; shift
+  printf '\n== %s\n' "$name"
+  if "$@"; then :; else failed+=("$name"); fi
+}
+
+for test in tests/*.test.sh; do run "$test" bash "$test"; done
+
+if command -v node >/dev/null; then
+  run tests/levels.test.js node tests/levels.test.js
+else
+  printf '\n== tests/levels.test.js\n  FAIL node is not installed\n'; failed+=(levels.test.js)
+fi
+
+check_repo() {
+  local bad=0
+  jq -e . manifest.json >/dev/null || { echo "  FAIL manifest.json is not valid JSON"; bad=1; }
+  if [[ -n $(find . -path ./.git -prune -o -type l -print) ]]; then
+    echo "  FAIL symlinks in the plugin folder:"; find . -path ./.git -prune -o -type l -print; bad=1
+  fi
+  for script in scripts/*; do
+    [[ -x $script ]] || { echo "  FAIL $script is not executable"; bad=1; }
+  done
+  bash -n scripts/* 2>&1 || bad=1
+  (( bad == 0 )) && echo "  ok   manifest, symlinks, script modes and syntax"
+  return $bad
+}
+run "repository checks" check_repo
+
+# Optional: the host's own validator and the QML linter, when installed.
+if command -v omarchy >/dev/null; then
+  run "omarchy plugin validate" omarchy plugin validate .
+fi
+if command -v qmllint6 >/dev/null || command -v qmllint >/dev/null; then
+  echo; echo "== qmllint (informational: Quickshell types are not known to the linter)"
+  "$(command -v qmllint6 || command -v qmllint)" BarWidget.qml Panel.qml 2>&1 | grep -iE 'syntax|error' | grep -viE 'import|unresolved|not found|Failed to import' | head -20 || true
+fi
+
+echo
+if (( ${#failed[@]} > 0 )); then
+  printf 'FAILED: %s\n' "${failed[@]}"
+  exit 1
+fi
+echo "All tests passed."

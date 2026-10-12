@@ -17,6 +17,119 @@
     "description": "Live RAM usage, PSI pressure, distance to the systemd-oomd kill lines, and per-app memory by cgroup.",
     "category": "System",
     "allowMultiple": false,
-    "defaultSection": "right"
+    "defaultSection": "right",
+    "defaults": {
+      "width": 27,
+      "processCount": 5,
+      "listMode": "apps",
+      "appCount": 6,
+      "notify": true,
+      "notifyCooldownSec": 300,
+      "swapWarnMargin": 15,
+      "swapCriticalMargin": 5,
+      "pressureWarnPercent": 50,
+      "criticalHoldPercent": 50
+    },
+    "schema": [
+      {
+        "key": "width",
+        "type": "integer",
+        "label": "Widget width",
+        "min": 27,
+        "max": 100,
+        "step": 1,
+        "defaultValue": 27,
+        "description": "Fixed horizontal width of the bar widget. 27 is the standard icon slot."
+      },
+      {
+        "key": "listMode",
+        "type": "enum",
+        "label": "Panel list",
+        "options": [
+          "apps",
+          "processes",
+          "both"
+        ],
+        "defaultValue": "apps",
+        "description": "Show apps grouped by cgroup (the units systemd-oomd kills), processes grouped by executable name, or both."
+      },
+      {
+        "key": "appCount",
+        "type": "integer",
+        "label": "App rows",
+        "min": 1,
+        "max": 12,
+        "step": 1,
+        "defaultValue": 6,
+        "description": "Number of app rows in the panel."
+      },
+      {
+        "key": "processCount",
+        "type": "integer",
+        "label": "Process rows",
+        "min": 1,
+        "max": 10,
+        "step": 1,
+        "defaultValue": 5,
+        "description": "Number of process rows in the panel."
+      },
+      {
+        "key": "notify",
+        "type": "boolean",
+        "label": "Notify when memory gets tight",
+        "defaultValue": true,
+        "description": "Send a desktop notification when the level enters warn or critical. Critical names the largest app oomd could kill."
+      },
+      {
+        "key": "notifyCooldownSec",
+        "type": "integer",
+        "label": "Notification cooldown (seconds)",
+        "min": 0,
+        "max": 86400,
+        "step": 30,
+        "defaultValue": 300,
+        "description": "Minimum time between two notifications for the same level."
+      },
+      {
+        "key": "swapWarnMargin",
+        "type": "integer",
+        "label": "Swap warn margin (points)",
+        "min": 0,
+        "max": 100,
+        "step": 1,
+        "defaultValue": 15,
+        "description": "Warn when swap used is within this many percentage points of the oomd swap limit."
+      },
+      {
+        "key": "swapCriticalMargin",
+        "type": "integer",
+        "label": "Swap critical margin (points)",
+        "min": 0,
+        "max": 100,
+        "step": 1,
+        "defaultValue": 5,
+        "description": "Critical when swap used is within this many percentage points of the oomd swap limit."
+      },
+      {
+        "key": "pressureWarnPercent",
+        "type": "integer",
+        "label": "Pressure warn (% of limit)",
+        "min": 1,
+        "max": 100,
+        "step": 5,
+        "defaultValue": 50,
+        "description": "Warn when app.slice pressure reaches this percent of the oomd pressure limit."
+      },
+      {
+        "key": "criticalHoldPercent",
+        "type": "integer",
+        "label": "Pressure critical hold (% of duration)",
+        "min": 0,
+        "max": 100,
+        "step": 5,
+        "defaultValue": 50,
+        "description": "Critical when pressure stays at or above the limit for this percent of the oomd duration."
+      }
+    ]
   }
 }
